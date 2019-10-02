@@ -1,0 +1,11 @@
+# Download datasets via
+
+kaggle datasets download paramaggarwal/fashion-product-images-dataset
+kaggle datasets download paramaggarwal/fashion-product-images-small
+
+# Check integrity of zip files
+zip -T fashion-product-images-small.zip # ---> intact
+zip -T fashion-product-images-dataset.zip # ---> broken
+
+zip -FF fashion-product-images-dataset.zip # ---> fails
+
