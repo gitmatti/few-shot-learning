@@ -2,7 +2,6 @@ from __future__ import print_function
 import os
 import csv
 from torchvision.datasets import VisionDataset
-from torchvision.datasets.utils import check_integrity, download_and_extract_archive
 from functools import partial
 import PIL
 import pandas
