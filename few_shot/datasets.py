@@ -30,15 +30,14 @@ class FashionProductImages(VisionDataset):
     # TODO.not_implemented: should different 'target_type' be allowed?
     target_type = 'articleType'
 
-    def __init__(self, root, split='train', target_type='articleType',
-                 transform=None, target_transform=None, download=False,
+    def __init__(self, root, split='train', transform=None,
+                 target_transform=None, download=False,
                  small_dataset=False, classes='top'):
         super(FashionProductImages, self).__init__(
             root, transform=transform, target_transform=target_transform)
 
         assert split in ['train', 'test']
         self.split = split
-        self.target_type = target_type
 
         # TODO.not_implemented: allow for usage of small dataset
         # if small_dataset:
@@ -60,6 +59,7 @@ class FashionProductImages(VisionDataset):
             csv_reader = csv.reader(file)
             column_names = next(csv_reader)
 
+        # additional column for comma artifacts in column 'productDisplayName'
         column_names.append(column_names[-1] + '2')
 
         # TODO.refactor: clean up column names, potentially merge last two columns
@@ -143,7 +143,7 @@ class FashionProductImages(VisionDataset):
         # with zipfile.ZipFile(os.path.join(self.root, self.base_folder, "img_align_celeba.zip"), "r") as f:
         #    f.extractall(os.path.join(self.root, self.base_folder))
 
-        raise NotImplementedError
+        raise NotImplementedError     
 
     def _check_integrity(self):
         # TODO.not_implemented: check this and compare to e.g. MNIST/CIFAR
