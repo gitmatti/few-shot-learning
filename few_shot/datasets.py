@@ -1,6 +1,7 @@
 from __future__ import print_function
 import os
 import csv
+import numpy as np
 from torchvision.datasets import VisionDataset
 from functools import partial
 import PIL
@@ -25,17 +26,18 @@ class FashionProductImages(VisionDataset):
         "Heels", "Handbags", "Tops", "Kurtas",
         "Sports Shoes", "Watches", "Casual Shoes", "Shirts",
         "Tshirts"]
+    
+    # TODO.not_implemented: should different 'target_type' be allowed?
+    target_type = 'articleType'
 
-    def __init__(self, root, split="train", target_type="articleType",
+    def __init__(self, root, split='train', target_type='articleType',
                  transform=None, target_transform=None, download=False,
-                 small_dataset=False):
+                 small_dataset=False, classes='top'):
         super(FashionProductImages, self).__init__(
             root, transform=transform, target_transform=target_transform)
 
+        assert split in ['train', 'test']
         self.split = split
-        self.target_type = target_type
-
-        # TODO.not_implemented: should a list of target types be allowed?
         self.target_type = target_type
 
         # TODO.not_implemented: allow for usage of small dataset
@@ -49,7 +51,7 @@ class FashionProductImages(VisionDataset):
 
         if not self._check_integrity():
             raise RuntimeError('Dataset not found or corrupted.' +
-                               ' You can use download=True to download it')
+                               ' You can use download=True to download it')            
 
         fn = partial(os.path.join, self.root, self.base_folder)
 
@@ -61,44 +63,55 @@ class FashionProductImages(VisionDataset):
         column_names.append(column_names[-1] + '2')
 
         # TODO.refactor: clean up column names, potentially merge last two columns
-        # TODO.refactor: column year is not parsed as integer - why?
         self.df_meta = pandas.read_csv(fn("styles.csv"), names=column_names,
                                        skiprows=1)
-
-        # checks if the images from 'styles.csv' are actually present
-        # in the 'images' folder and parses out top20 classes
+        
+        # relevant classes either by 'top'/'bottom' keyword or by list
+        all_classes = set(self.df_meta[self.target_type])
+        if isinstance(classes, list):
+            assert set(classes).issubset(all_classes)
+        else:
+            assert classes in ['top', 'bottom']
+            if classes == 'top':
+                classes = self.top20_classes
+            else:
+                classes = list(all_classes.difference(self.top20_classes))
+        
+        # parses out samples that
+        # - have a the relevant class label
+        # - have an image present in the 'images' folder
+        # - confer to the given split 'train'/'test'
         images = os.listdir(fn("images"))
+        if self.split == 'train':
+            split_mask = self._train_mask(self.df_meta)
+        else:
+            split_mask = ~ self._train_mask(self .df_meta)
+        
         self.samples = self.df_meta.loc[
-            (self.df_meta[self.target_type].isin(self.top20_classes))
-            & (self.df_meta["id"].apply(lambda x: str(x) + ".jpg").isin(
-                images))
-            ]
+            (self.df_meta[self.target_type].isin(classes))
+            & (self.df_meta["id"].apply(lambda x: str(x) + ".jpg").isin(images))
+            & split_mask
+        ]
 
         self.targets = self.samples[self.target_type]
         self.target_codec = LabelEncoder()
-        self.target_codec.fit(self.targets)
-
-        # TODO.decision: are additional codecs necessary?
-        # self.article_codec = LabelEncoder()
-        # self.gender_codec = LabelEncoder()
-        # self.master_category_codec = LabelEncoder()
-        # self.season_codec = LabelEncoder()
-        # self.article_codec.fit(self.metadata.loc[:, "articleType"])
-
-        # TODO.decision: prepare indices here or when __getitem__ is called?
+        self.target_codec.fit(classes)
+        
         self.target_indices = self.target_codec.transform(self.targets)
-
         self.n_classes = len(self.target_codec.classes_)
-
-        # TODO.goal: test and training set master split
-        # TODO.goal: fine-tune vs transfer classes
 
     def __getitem__(self, index):
         # TODO.check: some images are not RGB?
         # TODO.check: some images are not 80x60?
         sample = str(self.samples["id"].iloc[index]) + ".jpg"
-        X = PIL.Image.open(os.path.join(self.root, self.base_folder, "images",
-                                        sample)).convert("RGB")
+        X = PIL.Image.open(
+            os.path.join(
+                self.root,
+                self.base_folder,
+                "images",
+                sample
+            )
+        ).convert("RGB")
         target = self.target_indices[index]
 
         # TODO.extension: allow returning one-hot representation of target
@@ -113,6 +126,9 @@ class FashionProductImages(VisionDataset):
 
     def __len__(self):
         return len(self.samples)
+    
+    def _train_mask(self, df):
+        return df["year"] % 2 == 0
 
     def download(self):
         # TODO.not_implemented: check this and compare to e.g. MNIST/CIFAR
@@ -144,9 +160,9 @@ class FashionProductImages(VisionDataset):
         # return os.path.isdir(os.path.join(self.root, self.base_folder, "img_align_celeba"))
         return True
 
-    def extra_repr(self):
+    # def extra_repr(self):
         # TODO.not_implemented
-        pass
+        # pass
 
 
 if __name__ == "__main__":
