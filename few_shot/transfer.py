@@ -6,6 +6,7 @@ import warnings
 import numpy as np
 from sklearn.model_selection import train_test_split
 from functools import partial
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -15,140 +16,92 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.models as models
-
 import torch.nn.parallel
-# import torch.backends.cudnn as cudnn
-import torch.distributed as dist
-import torch.multiprocessing as mp
 
-from few_shot.datasets import FashionProductImages
-from few_shot.utils import AverageMeter, ProgressMeter, accuracy,\
-    batchnorm_to_fp32, save_checkpoint, save_results
+from few_shot.datasets import FashionProductImages, FashionProductImagesSmall
+from few_shot.utils import AverageMeter, ProgressMeter, allocate_model,\
+    accuracy, allocate_inputs, batchnorm_to_fp32, restore_model,\
+    save_checkpoint, save_results
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
-parser = argparse.ArgumentParser(description='PyTorch Transfer Learning')
-parser.add_argument('--data', metavar='DIR',
-                    default=os.path.expanduser("~/data"),
-                    help='path to dataset')
-parser.add_argument('-a', '--arch', metavar='ARCHITECTURE', default='resnet18',
-                    choices=model_names,
-                    help=('model architecture: '
-                          + ' | '.join(model_names)
-                          + ' (default: resnet18)'))
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
-                    help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=1, type=int, metavar='N',
-                    help='number of total epochs to run')
-parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                    help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=64, type=int,
-                    metavar='N',
-                    help='mini-batch size (default: 64)')
-parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
-                    metavar='LR', help='initial learning rate', dest='lr')
-parser.add_argument('--optim', default=torch.optim.Adam, metavar='OPTIMIZER',
-                    help='optimizer from torch.optim')
-parser.add_argument('--optim-args', default={}, type=dict, metavar='DICT',
-                    help='optimizer args')
-parser.add_argument('-p', '--print-freq', default=10, type=int,
-                    metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
-parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                    help='evaluate model on validation set')
-parser.add_argument('--seed', default=None, type=int,
-                    help='seed for initializing training. ')
-parser.add_argument('--gpu', default=None, type=int,
-                    help='GPU id to use.')
-parser.add_argument('--distributed', action='store_true',
-                    help='Use multi-processing distributed training to launch '
-                         'N processes per node, which has N GPUs.')
-# TODO not elegant
-parser.add_argument('--device', default=None, metavar='DEV')
-parser.add_argument('--dtype', default=None, metavar='DTYPE')
-
 best_acc1 = 0
 
 
 def main(
-    datadir='~/data',
-    architecture='resnet18',
-    num_workers=4,
-    epochs=100,
-    start_epoch=0,
-    batch_size=64,
-    learning_rate=1e-3,
-    optimizer=torch.optim.Adam,
-    print_freq=10,
-    resume=False,
-    evaluate=False,
-    seed=None,
-    gpu=None,
-    device=None,
-    dtype=None,
-    distributed=False
+        data_dir='~/data',
+        architecture='resnet18',
+        num_workers=4,
+        epochs=100,
+        batch_size=64,
+        learning_rate=1e-3,
+        learning_rate_tr=None,
+        optimizer_cls=torch.optim.Adam,
+        print_freq=10,
+        resume=False,
+        evaluate=False,
+        seed=None,
+        gpu=None,
+        device=None,
+        dtype=None,
+        distributed=False,
+        log_dir='~/few-shot-learning/logs',
+        model_dir='~/few-shot-learning/models',
+        date_prefix=False,
+        small_dataset=False
 ):
+    log_dir = os.path.expanduser(log_dir)
+    model_dir = os.path.expanduser(model_dir)
+    if date_prefix:
+        date = datetime.now().strftime(r"%y_%m_%d_%H%M")
+        log_dir = os.path.join(log_dir, date)
+        model_dir = os.path.join(model_dir, date)
+
+    if not os.path.isdir(log_dir):
+        os.mkdir(log_dir)
+
+    if not os.path.isdir(model_dir):
+        os.mkdir(model_dir)
+
     if seed is not None:
         random.seed(seed)
         torch.manual_seed(seed)
-    
-    def _allocate_model(model):
-        if dtype is not None:
-            model = model.to(dtype)  
-        
-        if not distributed:
-            if gpu is not None:
-                device = torch.device('cuda', gpu)
-            else:
-                if torch.cuda.is_available() and not distributed:
-                    device = torch.device('cuda', 0)
-                else:
-                    device = torch.device('cpu')
-                    
-            return model.to(device)
-        else:
-            # ngpus = torch.cuda.device_count()
-            
-            if architecture.startswith('alexnet') or architecture.startswith('vgg'):
-                model.features = torch.nn.DataParallel(model.features)
-                model.cuda()
-            else:
-                model = torch.nn.DataParallel(model).cuda()
-          
-            return model
-        
-    def _allocate_inputs(inputs, targets):
-        if distributed:
-            inputs = inputs.to(dtype).cuda()
-            targets = targets.cuda()
-        else:
-            if gpu is not None:
-                device = torch.device('cuda', gpu)
-            else:
-                if torch.cuda.is_available() and not distributed:
-                    device = torch.device('cuda', 0)
-                else:
-                    device = torch.device('cpu')
-            inputs = inputs.to(dtype).to(device)
-            targets = targets.to(device)
-        return inputs, targets
-        
-    # allocate_model = partial(_allocate_model, gpu, device, distributed self.base_folder)
 
-    global best_acc1
+    # make partial functions for allocation of model and inputs
+    _allocate_model = partial(allocate_model, dtype, distributed, gpu,
+                              architecture)
+
+    _allocate_inputs = partial(allocate_inputs, dtype, distributed, gpu)
+
+    # global best_acc1
+
+    # TODO not_implemented
+    # optionally resume from a checkpoint
+    # if resume:
+    #    restore_model(model, optimizer, gpu, model_dir)
+
+    # TODO not_implemented
+    #if evaluate:
+    #    validate(val_loader, model, criterion, device, print_freq)
+    #    return
 
     # ----------------------------------------------------------------------- #
     # Data loading
     # ----------------------------------------------------------------------- #
+
+    # Imagenet-specific normalization
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
+    # image dimension resize depending on dataset
+    resize = transforms.Resize((80, 60)) if small_dataset \
+        else transforms.Resize((400, 300))
+
     data_transforms = {
         'train': transforms.Compose([
-            transforms.Resize((400,300)),
+            resize,
             # transforms.RandomResizedCrop((80, 60), scale=(0.8, 1.0)),
             # transforms.RandomRotation(degrees=10),
             transforms.ColorJitter(),
@@ -157,15 +110,13 @@ def main(
             normalize
         ]),
         'val': transforms.Compose([
-            transforms.Resize((400,300)),
-            # transforms.Resize((80, 60)),
+            resize,
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
         ]),
         'test': transforms.Compose([
-            transforms.Resize((400,300)),
-            # transforms.Resize((80, 60)),
+            resize,
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
@@ -174,10 +125,13 @@ def main(
 
     # prepare dictionary of all datasets. There are datasets for train, test,
     # and validation for both the top20 and bottom (transfer) classes
+    dataset = FashionProductImages if not small_dataset \
+        else FashionProductImagesSmall
+
     data = {
         classes: {
-            split: FashionProductImages(
-                datadir,
+            split: dataset(
+                data_dir,
                 split='train' if split in ['train', 'val'] else 'test',
                 classes=classes,
                 transform=data_transforms[split]
@@ -196,108 +150,21 @@ def main(
                                   train_size=0.9,
                                   balanced_training=True)
 
-    train_loader = torch.utils.data.DataLoader(
+    train_loader_ft = torch.utils.data.DataLoader(
         trainset_ft, batch_size=batch_size, num_workers=num_workers,
         sampler=train_sampler_ft, pin_memory=True
     )
 
-    val_loader = torch.utils.data.DataLoader(
+    val_loader_ft = torch.utils.data.DataLoader(
         valset_ft, batch_size=batch_size, num_workers=num_workers,
         sampler=val_sampler_ft, pin_memory=True
     )
 
-    test_loader = torch.utils.data.DataLoader(
+    test_loader_ft = torch.utils.data.DataLoader(
         testset_ft, batch_size=batch_size, num_workers=num_workers,
         shuffle=False, pin_memory=True
     )
 
-    # ----------------------------------------------------------------------- #
-    # Create model and optimizer for initial fine-tuning
-    # ----------------------------------------------------------------------- #
-    print("=> using pre-trained model '{}'".format(architecture))
-    model = models.__dict__[architecture](pretrained=True)
-
-    # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda()
-
-    # TODO: optimizer args
-    optimizer_ft = optimizer(model.parameters(), learning_rate)
-
-    # TODo test this
-    # optionally resume from a checkpoint
-    if resume:
-        if os.path.isfile(resume):
-            print("=> loading checkpoint '{}'".format(resume))
-            if gpu is None:
-                checkpoint = torch.load(resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(gpu)
-                checkpoint = torch.load(resume, map_location=loc)
-            start_epoch = checkpoint['epoch']
-            best_acc1 = checkpoint['best_acc1']
-            if gpu is not None:
-                # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(gpu)
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer_ft.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(resume))
-
-    # change the last layer of the pre-trained model for fine-tuning
-    n_features = model.fc.in_features
-    model.fc = nn.Linear(n_features, trainset_ft.n_classes)
-    model = _allocate_model(model)
-    # model = batchnorm_to_fp32(model)
-
-    # TODO parameters as function arguments
-    lr_scheduler_ft = torch.optim.lr_scheduler.StepLR(optimizer_ft,
-                                                      step_size=5,
-                                                      gamma=0.5)
-
-    # TODO validate for both fine-tuning and transfer
-    if evaluate:
-        validate(val_loader, model, criterion, device, print_freq)
-        return
-
-    # ----------------------------------------------------------------------- #
-    # Training: fine-tune
-    # ----------------------------------------------------------------------- #
-    print("=> Running {} epochs of fine-tuning (top20)".format(epochs))
-    for epoch in range(start_epoch, epochs):
-
-        # train for one epoch
-        train(train_loader, model, criterion, optimizer_ft, lr_scheduler_ft,
-              epoch, print_freq, _allocate_inputs)
-
-        # evaluate on validation set
-        top1, _ = validate(val_loader, model, criterion, print_freq,
-                           _allocate_inputs)
-        acc1 = top1.avg
-
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
-
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'arch': architecture,
-            'state_dict': model.state_dict(),
-            'best_acc1': best_acc1,
-            'optimizer': optimizer_ft.state_dict(),
-        }, is_best)
-
-    test_top1_ft, test_top5_ft = validate(test_loader, model, criterion,
-                                          print_freq, _allocate_inputs)
-
-    # TODO not implemented
-    save_results({})
-
-    # ----------------------------------------------------------------------- #
-    # Create model and optimizer for transfer learning
-    # ----------------------------------------------------------------------- #
     # ending _tr for transfer
     trainset_tr = data['bottom']['train']
     valset_tr = data['bottom']['val']
@@ -323,59 +190,137 @@ def main(
         shuffle=False, pin_memory=True
     )
 
+    # ----------------------------------------------------------------------- #
+    # Create model and optimizer for initial fine-tuning
+    # ----------------------------------------------------------------------- #
+    print("=> using pre-trained model '{}'".format(architecture))
+    model = models.__dict__[architecture](pretrained=True)
+
+    # define loss function (criterion) and optimizer
+    # TODO: different devices
+    criterion = nn.CrossEntropyLoss().cuda()
+
+    # TODO: optimizer args
+    optimizer_ft = optimizer_cls(model.parameters(), learning_rate)
+
+    # change the last layer of the pre-trained model for fine-tuning
+    n_features = model.fc.in_features
+    model.fc = nn.Linear(n_features, trainset_ft.n_classes)
+    model = _allocate_model(model)
+
+    # TODO parameters as function arguments
+    lr_scheduler_ft = torch.optim.lr_scheduler.StepLR(optimizer_ft,
+                                                      step_size=5,
+                                                      gamma=0.7)
+
+    # ----------------------------------------------------------------------- #
+    # Training: fine-tune
+    # ----------------------------------------------------------------------- #
+    print("=> Running {} epochs of fine-tuning (top20)".format(epochs))
+
+    train_model(train_loader_ft, val_loader_ft, model, criterion, optimizer_ft,
+                lr_scheduler_ft, epochs, print_freq, _allocate_inputs,
+                model_prefix="finetuning",
+                log_dir=os.path.expanduser(log_dir),
+                model_dir=os.path.expanduser(model_dir))
+
+    _, test_top1_ft, test_top5_ft = validate(test_loader_ft, model, criterion,
+                                             print_freq, _allocate_inputs)
+
+    # ----------------------------------------------------------------------- #
+    # Create model and optimizer for transfer learning
+    # ----------------------------------------------------------------------- #
+
     # modify output layer a second time
     model.fc = nn.Linear(model.fc.in_features, trainset_tr.n_classes)
     model = _allocate_model(model)
-    # model.to(device)
 
     # freeze all lower layers of the network
     # for param in model_tr.parameters():
     #     param.requires_grad = False
 
-    # TODO: different learning rate for transfer in argparse
-    # TODO optimizer params as function arguments
-    optimizer_tr = optimizer(model.parameters(), lr=learning_rate)
+    learning_rate_tr = learning_rate if learning_rate_tr is None \
+        else learning_rate_tr
+    optimizer_tr = optimizer_cls(model.parameters(), lr=learning_rate_tr)
 
     lr_scheduler_tr = torch.optim.lr_scheduler.StepLR(optimizer_tr,
-                                                      step_size=10,
-                                                      gamma=0.1)
+                                                      step_size=5,
+                                                      gamma=0.7)
 
     # ----------------------------------------------------------------------- #
     # Training: transfer
     # ----------------------------------------------------------------------- #
     print("=> Running {} epochs of transfer learning".format(epochs))
-    for epoch in range(start_epoch, epochs):
+
+    train_model(train_loader_tr, val_loader_tr, model, criterion, optimizer_tr,
+                lr_scheduler_tr, epochs, print_freq, _allocate_inputs,
+                model_prefix="transfer",
+                log_dir=os.path.expanduser(log_dir),
+                model_dir=os.path.expanduser(model_dir))
+
+    _, test_top1_tr, test_top5_tr = validate(test_loader_tr,
+                                             model, criterion,
+                                             print_freq, _allocate_inputs)
+
+
+def train_model(
+        train_loader,
+        val_loader,
+        model,
+        criterion,
+        optimizer,
+        lr_scheduler,
+        epochs,
+        print_freq,
+        allocate_inputs,
+        model_prefix,
+        log_dir,
+        model_dir
+):
+    monitor_variables = ("train_loss", "train_acc1", "train_acc5",
+                         "val_loss", "val_acc1", "val_acc5")
+
+    results = {v: np.zeros(epochs) for v in monitor_variables}
+
+    best_acc1 = 0.0
+
+    for epoch in range(epochs):
+
         # train for one epoch
-        train(train_loader_tr, model, criterion, optimizer_tr, lr_scheduler_tr,
-              epoch, print_freq, _allocate_inputs)
+        train_loss, train_top1, train_top5 = train_epoch(train_loader, model,
+                                                         criterion, optimizer,
+                                                         lr_scheduler, epoch,
+                                                         print_freq,
+                                                         allocate_inputs)
 
         # evaluate on validation set
-        top1, _ = validate(val_loader_tr, model, criterion, print_freq,
-                           _allocate_inputs)
-        acc1 = top1.avg
+        val_loss, top1, top5 = validate(val_loader, model, criterion,
+                                        print_freq, allocate_inputs)
 
         # remember best acc@1 and save checkpoint
+        acc1 = top1.avg
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
 
         save_checkpoint({
             'epoch': epoch + 1,
-            'arch': architecture,
+            # 'arch': architecture,
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
-            'optimizer': optimizer_ft.state_dict(),
-        }, is_best)
+            'optimizer': optimizer.state_dict()
+        }, is_best, dir=model_dir, prefix=model_prefix)
 
-    test_top1_tr, test_top5_tr = validate(test_loader_tr,
-                                          model, criterion,
-                                          print_freq, _allocate_inputs)
+        for key, result in zip(monitor_variables,
+                               (train_loss, train_top1, train_top5,
+                                val_loss, top1, top5)):
+            results[key][epoch] = result.avg
 
-    # TODO not implemented
-    save_results({})
+    save_results(results, dir=log_dir, prefix=model_prefix)
 
 
-def train(train_loader, model, criterion, optimizer,
-          scheduler, epoch, print_freq, allocate_inputs):
+def train_epoch(train_loader, model, criterion, optimizer, scheduler, epoch,
+                print_freq, allocate_inputs):
+    # monitoring progress
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -396,10 +341,9 @@ def train(train_loader, model, criterion, optimizer,
 
         images, target = allocate_inputs(images, target)
         
-        # compute output
+        # compute output and loss
         output = model(images)
 
-        # TODO: CrossEntropyLoss accepts only torch.float32 !?   
         loss = criterion(output, target)
 
         # measure accuracy and record loss
@@ -420,7 +364,10 @@ def train(train_loader, model, criterion, optimizer,
         if i % print_freq == 0:
             progress.display(i)
 
+    # anneal learning rate
     scheduler.step()
+
+    return losses, top1, top5
 
 
 def validate(val_loader, model, criterion, print_freq, allocate_inputs):
@@ -432,7 +379,6 @@ def validate(val_loader, model, criterion, print_freq, allocate_inputs):
         len(val_loader),
         [losses, top1, top5],  # [batch_time]
         prefix='Test: ')
-
     # switch to evaluate mode
     model.eval()
 
@@ -462,7 +408,7 @@ def validate(val_loader, model, criterion, print_freq, allocate_inputs):
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
-    return top1, top5
+    return losses, top1, top5
 
 
 def get_train_and_val_sampler(trainset, train_size=0.9, balanced_training=True,
@@ -502,17 +448,72 @@ def get_train_and_val_sampler(trainset, train_size=0.9, balanced_training=True,
     return train_sampler, train_indices, val_sampler, val_indices
 
 
+def visualize_model():
+    pass
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='PyTorch Transfer Learning')
+    parser.add_argument('--data', metavar='DIR',
+                        default=os.path.expanduser("~/data"),
+                        help='path to dataset')
+    parser.add_argument('-a', '--arch', metavar='ARCHITECTURE',
+                        default='resnet18',
+                        choices=model_names,
+                        help=('model architecture: '
+                              + ' | '.join(model_names)
+                              + ' (default: resnet18)'))
+    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+                        help='number of data loading workers (default: 4)')
+    parser.add_argument('--epochs', default=100, type=int, metavar='N',
+                        help='number of total epochs to run')
+    parser.add_argument('-b', '--batch-size', default=64, type=int,
+                        metavar='N', help='mini-batch size (default: 64)')
+    parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
+                        metavar='LR', help='initial learning rate', dest='lr')
+    parser.add_argument('--lr_tr', '--learning-rate-tr', default=None,
+                        type=float, metavar='LR',
+                        help='initial learning rate for transfer',
+                        dest='lr_tr')
+    parser.add_argument('--optim', default=torch.optim.Adam,
+                        metavar='OPTIMIZER',
+                        help='optimizer from torch.optim')
+    parser.add_argument('--optim-args', default={}, type=dict, metavar='DICT',
+                        help='optimizer args')
+    parser.add_argument('-p', '--print-freq', default=10, type=int,
+                        metavar='N', help='print frequency (default: 10)')
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                        help='path to latest checkpoint (default: none)')
+    parser.add_argument('-e', '--evaluate', dest='evaluate',
+                        action='store_true',
+                        help='evaluate model on validation set')
+    parser.add_argument('--seed', default=None, type=int,
+                        help='seed for initializing training. ')
+    parser.add_argument('--gpu', default=None, type=int,
+                        help='GPU id to use.')
+    parser.add_argument('--distributed', action='store_true',
+                        help='Use multi-processing distributed training to '
+                             'launch N processes per node, which has N GPUs.')
+    # TODO not elegant
+    parser.add_argument('--device', default=None, metavar='DEV')
+    parser.add_argument('--dtype', default=None, metavar='DTYPE')
+    parser.add_argument('--date', action='store_true',
+                        help='Create log and model folder with current date')
+    parser.add_argument('--small-dataset', action='store_true',
+                        help='Use dataset with smaller image size')
+    # TODO model_dir and log_dir
+
     args = parser.parse_args()
+
     main(
-        data=args.data,
+        data_dir=args.data,
         architecture=args.arch,
         num_workers=args.workers,
-        epochs=args.epoch,
-        start_epoch=args.start_epoch,
+        epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
-        optimizer=args.optim,
+        learning_rate_tr=args.lr_tr,
+        optimizer_cls=args.optim,
         print_freq=args.print_freq,
         resume=args.resume,
         evaluate=args.evaluate,
@@ -520,5 +521,7 @@ if __name__ == '__main__':
         gpu=args.gpu,
         device=args.device,
         dtype=args.dtype,
-        distributed=args.distributed
+        distributed=args.distributed,
+        date_prefix=args.date,
+        small_dataset=args.small_dataset
     )
