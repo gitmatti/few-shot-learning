@@ -13,10 +13,9 @@ import zipfile
 class FashionProductImages(VisionDataset):
     """TODO
     """
-    base_folder = 'fashion-product-images-small'  # 'fashion-dataset'
-    # base_folder_small_dataset = 'fashion-product-images-small'
+    base_folder = 'fashion-dataset'
+    filename = "fashion-product-images-dataset.zip"
     url = None # TODO
-    filename = "fashion-product-images-small.zip"  # 'fashion-product-images-dataset.zip'
     file_list = None # TODO
 
     top20_classes = [
@@ -31,19 +30,12 @@ class FashionProductImages(VisionDataset):
     target_type = 'articleType'
 
     def __init__(self, root, split='train', transform=None,
-                 target_transform=None, download=False,
-                 small_dataset=False, classes='top'):
+                 target_transform=None, download=False, classes='top'):
         super(FashionProductImages, self).__init__(
             root, transform=transform, target_transform=target_transform)
 
         assert split in ['train', 'test']
         self.split = split
-
-        # TODO.not_implemented: allow for usage of small dataset
-        # if small_dataset:
-        #    base_folder = self.base_folder_small_dataset
-        # else:
-        #    base_folder = self.base_folder
 
         if download:
             self.download()
@@ -160,9 +152,13 @@ class FashionProductImages(VisionDataset):
         # return os.path.isdir(os.path.join(self.root, self.base_folder, "img_align_celeba"))
         return True
 
-    # def extra_repr(self):
-        # TODO.not_implemented
-        # pass
+        
+class FashionProductImagesSmall(FashionProductImages):
+    """TODO
+    """
+    base_folder = 'fashion-product-images-small'
+    url = None # TODO
+    filename = 'fashion-product-images-small.zip'
 
 
 if __name__ == "__main__":
@@ -181,7 +177,7 @@ if __name__ == "__main__":
         ]),
     }
 
-    fashion_data = FashionProductImages(
+    fashion_data = FashionProductImagesSmall(
         "~/data", transform=data_transforms["train"])
 
     train_size = int(len(fashion_data) * 0.75)
@@ -190,7 +186,7 @@ if __name__ == "__main__":
 
     train_loader = DataLoader(
         trainset, batch_size=64, shuffle=True, num_workers=4)
-    val_loader = DataLoader(valset, batch_size=64, shuffle=True, num_workers=4)
+    val_loader = DataLoader(valset, batch_size=64, shuffle=False, num_workers=4)
 
     counter = 0
     for batch in train_loader:
