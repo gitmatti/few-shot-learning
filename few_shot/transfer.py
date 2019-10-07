@@ -5,6 +5,7 @@ import time
 import warnings
 import numpy as np
 from sklearn.model_selection import train_test_split
+from functools import partial
 
 import torch
 import torch.nn as nn
@@ -15,9 +16,14 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.models as models
 
+import torch.nn.parallel
+# import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+import torch.multiprocessing as mp
+
 from few_shot.datasets import FashionProductImages
 from few_shot.utils import AverageMeter, ProgressMeter, accuracy,\
-    save_checkpoint, save_results
+    batchnorm_to_fp32, save_checkpoint, save_results
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -57,57 +63,109 @@ parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
                     help='GPU id to use.')
+parser.add_argument('--distributed', action='store_true',
+                    help='Use multi-processing distributed training to launch '
+                         'N processes per node, which has N GPUs.')
 # TODO not elegant
 parser.add_argument('--device', default=None, metavar='DEV')
+parser.add_argument('--dtype', default=None, metavar='DTYPE')
 
 best_acc1 = 0
 
 
-def main():
-    args = parser.parse_args()
-
-    if args.seed is not None:
-        random.seed(args.seed)
-        torch.manual_seed(args.seed)
-
-    if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))
-        args.device = torch.device('cuda', args.gpu)
-    else:
-        if torch.cuda.is_available():
-            args.device = torch.device('cuda', 0)
+def main(
+    datadir='~/data',
+    architecture='resnet18',
+    num_workers=4,
+    epochs=100,
+    start_epoch=0,
+    batch_size=64,
+    learning_rate=1e-3,
+    optimizer=torch.optim.Adam,
+    print_freq=10,
+    resume=False,
+    evaluate=False,
+    seed=None,
+    gpu=None,
+    device=None,
+    dtype=None,
+    distributed=False
+):
+    if seed is not None:
+        random.seed(seed)
+        torch.manual_seed(seed)
+    
+    def _allocate_model(model):
+        if dtype is not None:
+            model = model.to(dtype)  
+        
+        if not distributed:
+            if gpu is not None:
+                device = torch.device('cuda', gpu)
+            else:
+                if torch.cuda.is_available() and not distributed:
+                    device = torch.device('cuda', 0)
+                else:
+                    device = torch.device('cpu')
+                    
+            return model.to(device)
         else:
-            args.device = torch.device('cpu')
-
-    # ngpus = torch.cuda.device_count()
+            # ngpus = torch.cuda.device_count()
+            
+            if architecture.startswith('alexnet') or architecture.startswith('vgg'):
+                model.features = torch.nn.DataParallel(model.features)
+                model.cuda()
+            else:
+                model = torch.nn.DataParallel(model).cuda()
+          
+            return model
+        
+    def _allocate_inputs(inputs, targets):
+        if distributed:
+            inputs = inputs.to(dtype).cuda()
+            targets = targets.cuda()
+        else:
+            if gpu is not None:
+                device = torch.device('cuda', gpu)
+            else:
+                if torch.cuda.is_available() and not distributed:
+                    device = torch.device('cuda', 0)
+                else:
+                    device = torch.device('cpu')
+            inputs = inputs.to(dtype).to(device)
+            targets = targets.to(device)
+        return inputs, targets
+        
+    # allocate_model = partial(_allocate_model, gpu, device, distributed self.base_folder)
 
     global best_acc1
 
     # ----------------------------------------------------------------------- #
     # Data loading
     # ----------------------------------------------------------------------- #
-    datadir = args.data
-
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
     data_transforms = {
         'train': transforms.Compose([
-            transforms.RandomResizedCrop((80, 60), scale=(0.8, 1.0)),
-            transforms.RandomRotation(degrees=15),
+            transforms.Resize((400,300)),
+            # transforms.RandomResizedCrop((80, 60), scale=(0.8, 1.0)),
+            # transforms.RandomRotation(degrees=10),
             transforms.ColorJitter(),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize
         ]),
         'val': transforms.Compose([
-            transforms.Resize((80, 60)),
+            transforms.Resize((400,300)),
+            # transforms.Resize((80, 60)),
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
         ]),
         'test': transforms.Compose([
-            transforms.Resize((80, 60)),
+            transforms.Resize((400,300)),
+            # transforms.Resize((80, 60)),
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
@@ -139,88 +197,84 @@ def main():
                                   balanced_training=True)
 
     train_loader = torch.utils.data.DataLoader(
-        trainset_ft, batch_size=args.batch_size, num_workers=args.workers,
+        trainset_ft, batch_size=batch_size, num_workers=num_workers,
         sampler=train_sampler_ft, pin_memory=True
     )
 
     val_loader = torch.utils.data.DataLoader(
-        valset_ft, batch_size=args.batch_size, num_workers=args.workers,
+        valset_ft, batch_size=batch_size, num_workers=num_workers,
         sampler=val_sampler_ft, pin_memory=True
     )
 
     test_loader = torch.utils.data.DataLoader(
-        testset_ft, batch_size=args.batch_size, num_workers=args.workers,
+        testset_ft, batch_size=batch_size, num_workers=num_workers,
         shuffle=False, pin_memory=True
     )
 
     # ----------------------------------------------------------------------- #
     # Create model and optimizer for initial fine-tuning
     # ----------------------------------------------------------------------- #
-    print("=> using pre-trained model '{}'".format(args.arch))
-    model = models.__dict__[args.arch](pretrained=True)
+    print("=> using pre-trained model '{}'".format(architecture))
+    model = models.__dict__[architecture](pretrained=True)
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().to(args.device)
+    criterion = nn.CrossEntropyLoss().cuda()
 
     # TODO: optimizer args
-    optimizer_ft = args.optim(model.parameters(), args.lr)
+    optimizer_ft = optimizer(model.parameters(), learning_rate)
 
     # TODo test this
     # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
+    if resume:
+        if os.path.isfile(resume):
+            print("=> loading checkpoint '{}'".format(resume))
+            if gpu is None:
+                checkpoint = torch.load(resume)
             else:
                 # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
-            args.start_epoch = checkpoint['epoch']
+                loc = 'cuda:{}'.format(gpu)
+                checkpoint = torch.load(resume, map_location=loc)
+            start_epoch = checkpoint['epoch']
             best_acc1 = checkpoint['best_acc1']
-            if args.gpu is not None:
+            if gpu is not None:
                 # best_acc1 may be from a checkpoint from a different GPU
-                best_acc1 = best_acc1.to(args.gpu)
+                best_acc1 = best_acc1.to(gpu)
             model.load_state_dict(checkpoint['state_dict'])
             optimizer_ft.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+                  .format(resume, checkpoint['epoch']))
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            print("=> no checkpoint found at '{}'".format(resume))
 
     # change the last layer of the pre-trained model for fine-tuning
     n_features = model.fc.in_features
     model.fc = nn.Linear(n_features, trainset_ft.n_classes)
+    model = _allocate_model(model)
+    # model = batchnorm_to_fp32(model)
 
-    model.to(args.device)
-    # if args.gpu is not None:
-    #     torch.cuda.set_device(args.gpu)
-    #     model = model.cuda(args.gpu)
-
-    # TODO args via argparse
+    # TODO parameters as function arguments
     lr_scheduler_ft = torch.optim.lr_scheduler.StepLR(optimizer_ft,
                                                       step_size=5,
                                                       gamma=0.5)
 
     # TODO validate for both fine-tuning and transfer
-    if args.evaluate:
-        validate(val_loader, model, criterion, args)
+    if evaluate:
+        validate(val_loader, model, criterion, device, print_freq)
         return
 
     # ----------------------------------------------------------------------- #
     # Training: fine-tune
     # ----------------------------------------------------------------------- #
-    print("=> Running {} epochs of fine-tuning (top20)".format(args.epochs))
-    for epoch in range(args.start_epoch, args.epochs):
-        # TODO scheduler
-        # adjust_learning_rate(optimizer, epoch, args)
+    print("=> Running {} epochs of fine-tuning (top20)".format(epochs))
+    for epoch in range(start_epoch, epochs):
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer_ft, lr_scheduler_ft,
-              epoch, args)
+              epoch, print_freq, _allocate_inputs)
 
         # evaluate on validation set
-        top1, _ = validate(val_loader, model, criterion, args)
+        top1, _ = validate(val_loader, model, criterion, print_freq,
+                           _allocate_inputs)
         acc1 = top1.avg
 
         # remember best acc@1 and save checkpoint
@@ -229,13 +283,14 @@ def main():
 
         save_checkpoint({
             'epoch': epoch + 1,
-            'arch': args.arch,
+            'arch': architecture,
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'optimizer': optimizer_ft.state_dict(),
         }, is_best)
 
-    test_top1_ft, test_top5_ft = validate(test_loader, model, criterion, args)
+    test_top1_ft, test_top5_ft = validate(test_loader, model, criterion,
+                                          print_freq, _allocate_inputs)
 
     # TODO not implemented
     save_results({})
@@ -256,29 +311,30 @@ def main():
                                   stratify=False)
 
     train_loader_tr = torch.utils.data.DataLoader(
-        trainset_tr, batch_size=args.batch_size, num_workers=args.workers,
+        trainset_tr, batch_size=batch_size, num_workers=num_workers,
         sampler=train_sampler_tr
     )
     val_loader_tr = torch.utils.data.DataLoader(
-        valset_tr, batch_size=args.batch_size, num_workers=args.workers,
+        valset_tr, batch_size=batch_size, num_workers=num_workers,
         sampler=val_sampler_tr
     )
     test_loader_tr = torch.utils.data.DataLoader(
-        testset_tr, batch_size=args.batch_size, num_workers=args.workers,
+        testset_tr, batch_size=batch_size, num_workers=num_workers,
         shuffle=False, pin_memory=True
     )
 
     # modify output layer a second time
     model.fc = nn.Linear(model.fc.in_features, trainset_tr.n_classes)
-    model.to(args.device)
+    model = _allocate_model(model)
+    # model.to(device)
 
     # freeze all lower layers of the network
     # for param in model_tr.parameters():
     #     param.requires_grad = False
 
     # TODO: different learning rate for transfer in argparse
-    # TODO optimizer args
-    optimizer_tr = args.optim(model.parameters(), lr=1e-4)
+    # TODO optimizer params as function arguments
+    optimizer_tr = optimizer(model.parameters(), lr=learning_rate)
 
     lr_scheduler_tr = torch.optim.lr_scheduler.StepLR(optimizer_tr,
                                                       step_size=10,
@@ -287,14 +343,15 @@ def main():
     # ----------------------------------------------------------------------- #
     # Training: transfer
     # ----------------------------------------------------------------------- #
-    print("=> Running {} epochs of transfer learning".format(args.epochs))
-    for epoch in range(args.start_epoch, args.epochs):
+    print("=> Running {} epochs of transfer learning".format(epochs))
+    for epoch in range(start_epoch, epochs):
         # train for one epoch
         train(train_loader_tr, model, criterion, optimizer_tr, lr_scheduler_tr,
-              epoch, args)
+              epoch, print_freq, _allocate_inputs)
 
         # evaluate on validation set
-        top1, _ = validate(val_loader_tr, model, criterion, args)
+        top1, _ = validate(val_loader_tr, model, criterion, print_freq,
+                           _allocate_inputs)
         acc1 = top1.avg
 
         # remember best acc@1 and save checkpoint
@@ -303,43 +360,46 @@ def main():
 
         save_checkpoint({
             'epoch': epoch + 1,
-            'arch': args.arch,
+            'arch': architecture,
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'optimizer': optimizer_ft.state_dict(),
         }, is_best)
 
     test_top1_tr, test_top5_tr = validate(test_loader_tr,
-                                          model, criterion, args)
+                                          model, criterion,
+                                          print_freq, _allocate_inputs)
 
     # TODO not implemented
     save_results({})
 
 
-def train(train_loader, model, criterion, optimizer, scheduler, epoch, args):
-    # batch_time = AverageMeter('Time', ':6.3f')
-    # data_time = AverageMeter('Data', ':6.3f')
+def train(train_loader, model, criterion, optimizer,
+          scheduler, epoch, print_freq, allocate_inputs):
+    batch_time = AverageMeter('Time', ':6.3f')
+    data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(
         len(train_loader),
-        [losses, top1, top5],  # [batch_time, data_time]
+        [losses, top1, top5, batch_time, data_time],
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
     model.train()
 
-    # end = time.time()
+    since = time.time()
     for i, (images, target) in enumerate(train_loader):
         # measure data loading time
-        # data_time.update(time.time() - end)
+        data_time.update(time.time() - since)
 
-        images.to(args.device)
-        target.to(args.device)
-
+        images, target = allocate_inputs(images, target)
+        
         # compute output
         output = model(images)
+
+        # TODO: CrossEntropyLoss accepts only torch.float32 !?   
         loss = criterion(output, target)
 
         # measure accuracy and record loss
@@ -348,22 +408,22 @@ def train(train_loader, model, criterion, optimizer, scheduler, epoch, args):
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
 
-        # compute gradient and do SGD step
+        # compute gradient and do optimizer step
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         # measure elapsed time
-        # batch_time.update(time.time() - end)
-        # end = time.time()
+        batch_time.update(time.time() - since)
+        since = time.time()
 
-        if i % args.print_freq == 0:
+        if i % print_freq == 0:
             progress.display(i)
 
     scheduler.step()
 
 
-def validate(val_loader, model, criterion, args):
+def validate(val_loader, model, criterion, print_freq, allocate_inputs):
     # batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
@@ -379,8 +439,7 @@ def validate(val_loader, model, criterion, args):
     with torch.no_grad():
         # end = time.time()
         for i, (images, target) in enumerate(val_loader):
-            images.to(args.device)
-            target.to(args.device)
+            images, target = allocate_inputs(images, target)
 
             # compute output
             output = model(images)
@@ -396,7 +455,7 @@ def validate(val_loader, model, criterion, args):
             # batch_time.update(time.time() - end)
             # end = time.time()
 
-            if i % args.print_freq == 0:
+            if i % print_freq == 0:
                 progress.display(i)
 
         # TODO: this should also be done with the ProgressMeter
@@ -444,4 +503,22 @@ def get_train_and_val_sampler(trainset, train_size=0.9, balanced_training=True,
 
 
 if __name__ == '__main__':
-    main()
+    args = parser.parse_args()
+    main(
+        data=args.data,
+        architecture=args.arch,
+        num_workers=args.workers,
+        epochs=args.epoch,
+        start_epoch=args.start_epoch,
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        optimizer=args.optim,
+        print_freq=args.print_freq,
+        resume=args.resume,
+        evaluate=args.evaluate,
+        seed=args.seed,
+        gpu=args.gpu,
+        device=args.device,
+        dtype=args.dtype,
+        distributed=args.distributed
+    )

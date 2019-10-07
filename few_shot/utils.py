@@ -1,5 +1,6 @@
 import shutil
 import torch
+import torch.nn as nn
 
 
 class AverageMeter(object):
@@ -62,6 +63,14 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+
+def batchnorm_to_fp32(module):
+    if isinstance(module, nn.modules.batchnorm._BatchNorm):
+        module.float()
+    for child in module.children():
+        batchnorm_to_fp32(child)
+    return module
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
