@@ -96,27 +96,25 @@ def main(
                                      std=[0.229, 0.224, 0.225])
 
     # image dimension resize depending on dataset
-    resize = transforms.Resize((80, 60)) if small_dataset \
-        else transforms.Resize((400, 300))
+    resize = (80,60) if small_dataset else (400, 300)
 
     data_transforms = {
         'train': transforms.Compose([
-            resize,
-            # transforms.RandomResizedCrop((80, 60), scale=(0.8, 1.0)),
-            # transforms.RandomRotation(degrees=10),
+            # transforms.Resize(resize),
+            transforms.RandomResizedCrop(resize, scale=(0.8, 1.0)),
             transforms.ColorJitter(),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize
         ]),
         'val': transforms.Compose([
-            resize,
+            transforms.Resize(resize),
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
         ]),
         'test': transforms.Compose([
-            resize,
+            transforms.Resize(resize),
             # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
@@ -232,6 +230,13 @@ def main(
     # ----------------------------------------------------------------------- #
 
     # modify output layer a second time
+    # TODO this is a terrible hack to avoid the problems of the original model
+    # TODO being on multiple gpus and then adjusting the output layer
+    new_model = models.__dict__[architecture](pretrained=True)
+    new_model.fc = nn.Linear(n_features, trainset_ft.n_classes)
+    new_model.load_state_dict(model.module.state_dict())
+    del model
+    model = new_model
     model.fc = nn.Linear(model.fc.in_features, trainset_tr.n_classes)
     model = _allocate_model(model)
 
@@ -262,7 +267,7 @@ def main(
                                              model, criterion,
                                              print_freq, _allocate_inputs)
 
-
+    
 def train_model(
         train_loader,
         val_loader,
@@ -283,6 +288,7 @@ def train_model(
     results = {v: np.zeros(epochs) for v in monitor_variables}
 
     best_acc1 = 0.0
+    best_state_dict = None
 
     for epoch in range(epochs):
 
@@ -301,6 +307,9 @@ def train_model(
         acc1 = top1.avg
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
+        
+        if is_best:
+            best_state_dict = model.state_dict()
 
         save_checkpoint({
             'epoch': epoch + 1,
@@ -308,13 +317,14 @@ def train_model(
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'optimizer': optimizer.state_dict()
-        }, is_best, dir=model_dir, prefix=model_prefix)
+        }, is_best, model_dir=model_dir, prefix=model_prefix)
 
         for key, result in zip(monitor_variables,
                                (train_loss, train_top1, train_top5,
                                 val_loss, top1, top5)):
             results[key][epoch] = result.avg
 
+    model.load_state_dict(best_state_dict)
     save_results(results, dir=log_dir, prefix=model_prefix)
 
 

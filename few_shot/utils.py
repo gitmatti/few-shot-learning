@@ -121,9 +121,11 @@ def restore_model(
         model,
         optimizer=None,
         gpu=None,
+        prefix=None,
         model_dir='~/few-shot-learning/models',
         filename='model_best.pth.tar'
 ):
+    # TODO use prefix
     model_filename = os.path.join(os.path.expanduser(model_dir), filename)
 
     if os.path.isfile(model_filename):
@@ -151,17 +153,17 @@ def restore_model(
 
 
 def save_checkpoint(state, is_best, prefix=None, filename='checkpoint.pth.tar',
-                    dir="."):
+                    model_dir='~/few-shot-learning/models'):
     if prefix is not None:
         filename = '{}_{}'.format(prefix, filename)
         best_filename = '{}_{}'.format(prefix, 'model_best.pth.tar')
     else:
         best_filename = 'model_best.pth.tar'
 
-    torch.save(state, os.path.join(dir, filename))
+    torch.save(state, os.path.join(model_dir, filename))
     if is_best:
-        shutil.copyfile(os.path.join(dir, filename),
-                        os.path.join(dir, best_filename))
+        shutil.copyfile(os.path.join(model_dir, filename),
+                        os.path.join(model_dir, best_filename))
 
 
 def save_results(results, prefix=None, filename='training_log.json', dir='.'):
