@@ -4,7 +4,7 @@ import csv
 import numpy as np
 from torchvision.datasets import VisionDataset
 from functools import partial
-import PIL
+import PIL.Image
 import pandas
 from sklearn.preprocessing import LabelEncoder
 import zipfile
@@ -55,19 +55,22 @@ class FashionProductImages(VisionDataset):
         column_names.append(column_names[-1] + '2')
 
         # TODO.refactor: clean up column names, potentially merge last two columns
-        self.df_meta = pandas.read_csv(fn("styles.csv"), names=column_names,
-                                       skiprows=1)
+        self.df = pandas.read_csv(fn("styles.csv"), names=column_names,
+                                  skiprows=1)
         
         # relevant classes either by 'top'/'bottom' keyword or by list
-        all_classes = set(self.df_meta[self.target_type])
-        if isinstance(classes, list):
-            assert set(classes).issubset(all_classes)
-        else:
-            assert classes in ['top', 'bottom']
-            if classes == 'top':
-                classes = self.top20_classes
+        all_classes = set(self.df[self.target_type])
+        if classes is not None:
+            if isinstance(classes, list):
+                assert set(classes).issubset(all_classes)
             else:
-                classes = list(all_classes.difference(self.top20_classes))
+                assert classes in ['top', 'bottom']
+                if classes == 'top':
+                    classes = self.top20_classes
+                else:
+                    classes = list(all_classes.difference(self.top20_classes))
+        else:
+            classes = list(all_classes)
         
         # parses out samples that
         # - have a the relevant class label
@@ -75,13 +78,13 @@ class FashionProductImages(VisionDataset):
         # - confer to the given split 'train'/'test'
         images = os.listdir(fn("images"))
         if self.split == 'train':
-            split_mask = self._train_mask(self.df_meta)
+            split_mask = self._train_mask(self.df)
         else:
-            split_mask = ~ self._train_mask(self .df_meta)
+            split_mask = ~ self._train_mask(self .df)
         
-        self.samples = self.df_meta.loc[
-            (self.df_meta[self.target_type].isin(classes))
-            & (self.df_meta["id"].apply(lambda x: str(x) + ".jpg").isin(images))
+        self.samples = self.df.loc[
+            (self.df[self.target_type].isin(classes))
+            & (self.df["id"].apply(lambda x: str(x) + ".jpg").isin(images))
             & split_mask
         ]
 
