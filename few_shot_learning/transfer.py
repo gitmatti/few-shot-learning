@@ -4,7 +4,6 @@ import random
 import time
 import warnings
 import numpy as np
-from sklearn.model_selection import train_test_split
 from functools import partial
 from datetime import datetime
 
@@ -18,10 +17,12 @@ import torchvision.transforms as transforms
 import torchvision.models as models
 import torch.nn.parallel
 
-from few_shot.datasets import FashionProductImages, FashionProductImagesSmall
-from few_shot.utils import AverageMeter, ProgressMeter, allocate_model,\
-    accuracy, allocate_inputs, batchnorm_to_fp32, restore_model,\
-    save_checkpoint, save_results
+from few_shot_learning.datasets import FashionProductImages,\
+    FashionProductImagesSmall
+from few_shot_learning.sampler import get_train_and_val_sampler
+from few_shot_learning.utils import AverageMeter, ProgressMeter,\
+    allocate_model, accuracy, allocate_inputs, batchnorm_to_fp32,\
+    restore_model, save_checkpoint, save_results
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -419,47 +420,6 @@ def validate(val_loader, model, criterion, print_freq, allocate_inputs):
               .format(top1=top1, top5=top5))
 
     return losses, top1, top5
-
-
-def get_train_and_val_sampler(trainset, train_size=0.9, balanced_training=True,
-                              stratify=True):
-    n_classes = trainset.n_classes
-    n_samples = len(trainset)
-    indices = np.arange(n_samples)
-    labels = trainset.target_indices
-
-    train_indices, val_indices = train_test_split(
-        indices, train_size=train_size,
-        stratify=trainset.target_indices if stratify else None
-    )
-
-    val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
-
-    if balanced_training:
-        class_sample_count = np.bincount(labels[train_indices],
-                                         minlength=n_classes)
-        class_sample_count = torch.from_numpy(class_sample_count).float()
-
-        class_weights = torch.zeros_like(class_sample_count)
-        class_weights[class_sample_count > 0] = \
-            1. / class_sample_count[class_sample_count > 0]
-
-        train_weights = class_weights[labels[train_indices]]
-        dataset_weights = torch.zeros(n_samples)
-        dataset_weights[train_indices] = train_weights
-
-        # TODO: in this way, train_loader will still produce n_samples
-        # samples per epoch (instead of train_size*n_samples)
-        train_sampler = torch.utils.data.WeightedRandomSampler(
-            dataset_weights, n_samples, replacement=True)
-    else:
-        train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
-
-    return train_sampler, train_indices, val_sampler, val_indices
-
-
-def visualize_model():
-    pass
 
 
 if __name__ == '__main__':
