@@ -17,6 +17,7 @@ import torchvision.transforms as transforms
 import torchvision.models as models
 import torch.nn.parallel
 
+from few_shot_learning.models import AdaptiveHeadClassifier
 from few_shot_learning.datasets import FashionProductImages,\
     FashionProductImagesSmall
 from few_shot_learning.sampler import get_train_and_val_sampler
@@ -193,7 +194,9 @@ def main(
     # Create model and optimizer for initial fine-tuning
     # ----------------------------------------------------------------------- #
     print("=> using pre-trained model '{}'".format(architecture))
-    model = models.__dict__[architecture](pretrained=True)
+    out_features = [trainset_ft.n_classes, trainset_tr.n_classes]
+    model = AdaptiveHeadClassifier(out_features, architecture=architecture)
+    model = _allocate_model(model)
 
     # define loss function (criterion) and optimizer
     # TODO: different devices
@@ -201,11 +204,6 @@ def main(
 
     # TODO: optimizer args
     optimizer_ft = optimizer_cls(model.parameters(), learning_rate)
-
-    # change the last layer of the pre-trained model for fine-tuning
-    n_features = model.fc.in_features
-    model.fc = nn.Linear(n_features, trainset_ft.n_classes)
-    model = _allocate_model(model)
 
     # TODO parameters as function arguments
     lr_scheduler_ft = torch.optim.lr_scheduler.StepLR(optimizer_ft,
@@ -227,24 +225,16 @@ def main(
                                              print_freq, _allocate_inputs)
 
     # ----------------------------------------------------------------------- #
-    # Create model and optimizer for transfer learning
+    # Create optimizer for transfer learning
     # ----------------------------------------------------------------------- #
 
-    # modify output layer a second time
-    # TODO this is a terrible hack to avoid the problems of the original model
-    # TODO being on multiple gpus and then adjusting the output layer
-    new_model = models.__dict__[architecture](pretrained=True)
-    new_model.fc = nn.Linear(n_features, trainset_ft.n_classes)
-    new_model.load_state_dict(model.module.state_dict())
-    del model
-    model = new_model
-    model.fc = nn.Linear(model.fc.in_features, trainset_tr.n_classes)
-    model = _allocate_model(model)
+    # change the active head
+    try:
+        model.set_active(1)
+    except AttributeError:
+        model.module.set_active(1)
 
-    # freeze all lower layers of the network
-    # for param in model_tr.parameters():
-    #     param.requires_grad = False
-
+    # start a new learning rate scheduler and optimizer
     learning_rate_tr = learning_rate if learning_rate_tr is None \
         else learning_rate_tr
     optimizer_tr = optimizer_cls(model.parameters(), lr=learning_rate_tr)
