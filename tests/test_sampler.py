@@ -33,21 +33,18 @@ class DummyUnbalancedDataset(Dataset):
             self.samples_per_class[1] = 1
 
         # Create a dataframe to be consistent with other Datasets
-        class_id = []
+        self.target_indices = []
         for i in range(self.n_classes):
-            class_id.extend([i] * self.samples_per_class[i])
-        self.samples = pandas.DataFrame({
-            'class_id': class_id
-        })
-        self.samples = self.samples.assign(id=self.samples.index.values)
-        self.target_indices = self.samples["class_id"]
+            self.target_indices.extend([i] * self.samples_per_class[i])
+
+        self.target_indices = np.array(self.target_indices)
 
     def __len__(self):
         return self.samples_per_class.sum()
 
     def __getitem__(self, item):
         X = np.random.normal(size=self.n_features)
-        y = self.samples["class_id"][item]
+        y = self.target_indices[item]
         return X, y
 
 
@@ -57,9 +54,6 @@ class TestTrainAndValSampler(unittest.TestCase):
         cls.dataset = DummyUnbalancedDataset(max_samples_per_class=10000)
         cls.unstrafifiable_dataset = \
             DummyUnbalancedDataset(unstrafifiable=True)
-
-    def test_batch_sizes(self):
-        pass
 
     def test_stratify_indices(self):
         train_sampler, train_indices, val_sampler, val_indices = \
@@ -123,10 +117,38 @@ class TestTrainAndValSampler(unittest.TestCase):
                           self.unstrafifiable_dataset, stratify=True)
 
     def test_train_size(self):
-        pass
+        self.assertRaises(ValueError, get_train_and_val_sampler, self.dataset,
+                          train_size=1.1)
+        self.assertRaises(ValueError, get_train_and_val_sampler, self.dataset,
+                          train_size=1.1, stratify=False)
 
     def test_balanced_sampling(self):
-        pass
+        train_sampler, _, _, _ = \
+            get_train_and_val_sampler(self.dataset,
+                                      train_size=0.7,
+                                      balanced_training=True,
+                                      stratify=True)
+
+        train_loader = \
+            DataLoader(self.dataset, batch_size=128, sampler=train_sampler)
+
+        y_counts = np.zeros(self.dataset.n_classes)
+        for _, y in train_loader:
+            y_counts += np.bincount(y, minlength=self.dataset.n_classes)
+
+        y_proportions = y_counts / y_counts.sum()
+        y_equi = np.ones(self.dataset.n_classes) / self.dataset.n_classes
+
+        self.assertTrue(y_proportions[0] == 0.0)
+
+        all_close = np.allclose(y_proportions[y_proportions > 0],
+                                y_equi[y_proportions > 0],
+                                rtol=1e-2, atol=1/(self.dataset.n_classes*10))
+
+        self.assertTrue(all_close,
+                        "Label proportions during sampling for training set "
+                        "not close to uniform for balanced training according "
+                        "to np.allclose")
 
     def test_no_overlap(self):
         pass
