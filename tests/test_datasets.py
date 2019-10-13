@@ -24,6 +24,7 @@ SIZE = 44441
 class TestFashionProductImages(unittest.TestCase):
     def test_default_config(self):
         for cls in CLS:
+            # TODO actually test this
             if DATA_PATH is None:
                 self.assertRaises(Exception, cls, DATA_PATH)
             else:
@@ -67,7 +68,7 @@ class TestFashionProductImages(unittest.TestCase):
                                  "Test set contains samples from even years")
 
     def test_size(self):
-        for cls in CLS[:1]:
+        for cls in CLS:
             total_size = 0
             for split in ["train", "test"]:
                 for classes in ["top", "bottom"]:
@@ -128,6 +129,7 @@ class TestDataloaderOnFashionProductImages(unittest.TestCase):
     def setUpClass(cls):
         cls.dataset = FashionProductImages(DATA_PATH, split='train', classes=None)
 
+    # TODO figure out of any of this is necessary
     def test_random_split(self):
         train_size = int(len(self.dataset) * 0.8)
 
