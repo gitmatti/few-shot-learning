@@ -9,6 +9,8 @@ import pandas
 from sklearn.preprocessing import LabelEncoder
 import zipfile
 
+from config import DATA_PATH
+
 
 class FashionProductImages(VisionDataset):
     """TODO
@@ -25,16 +27,52 @@ class FashionProductImages(VisionDataset):
         "Heels", "Handbags", "Tops", "Kurtas",
         "Sports Shoes", "Watches", "Casual Shoes", "Shirts",
         "Tshirts"]
+
+    background_classes = [
+        "Cufflinks", "Rompers", "Laptop Bag", "Sports Sandals", "Hair Colour",
+        "Suspenders", "Trousers", "Kajal and Eyeliner", "Compact", "Concealer",
+        "Jackets", "Mufflers", "Backpacks", "Sandals", "Shorts", "Waistcoat",
+        "Watches", "Pendant", "Basketballs", "Bath Robe", "Boxers",
+        "Deodorant", "Rain Jacket", "Necklace and Chains", "Ring",
+        "Formal Shoes", "Nail Polish", "Baby Dolls", "Lip Liner", "Bangle",
+        "Tshirts", "Flats", "Stockings", "Skirts", "Mobile Pouch", "Capris",
+        "Dupatta", "Lip Gloss", "Patiala", "Handbags", "Leggings", "Ties",
+        "Flip Flops", "Rucksacks", "Jeggings", "Nightdress", "Waist Pouch",
+        "Tops", "Dresses", "Water Bottle", "Camisoles", "Heels", "Gloves",
+        "Duffel Bag", "Swimwear", "Booties", "Kurtis", "Belts",
+        "Accessory Gift Set", "Bra"
+    ]
+
+    evaluation_classes = [
+        "Jeans", "Bracelet", "Eyeshadow", "Sweaters", "Sarees", "Earrings",
+        "Casual Shoes", "Tracksuits", "Clutches", "Socks", "Innerwear Vests",
+        "Night suits", "Salwar", "Stoles", "Face Moisturisers",
+        "Perfume and Body Mist", "Lounge Shorts", "Scarves", "Briefs",
+        "Jumpsuit", "Wallets", "Foundation and Primer", "Sports Shoes",
+        "Highlighter and Blush", "Sunscreen", "Shoe Accessories",
+        "Track Pants", "Fragrance Gift Set", "Shirts", "Sweatshirts",
+        "Mask and Peel", "Jewellery Set", "Face Wash and Cleanser",
+        "Messenger Bag", "Free Gifts", "Kurtas", "Mascara", "Lounge Pants",
+        "Caps", "Lip Care", "Trunk", "Tunics", "Kurta Sets", "Sunglasses",
+        "Lipstick", "Churidar", "Travel Accessory"
+    ]
     
     # TODO.not_implemented: should different 'target_type' be allowed?
     target_type = 'articleType'
 
-    def __init__(self, root, split='train', transform=None,
+    def __init__(self, root=DATA_PATH, split='train', transform=None,
                  target_transform=None, download=False, classes='top'):
         super(FashionProductImages, self).__init__(
             root, transform=transform, target_transform=target_transform)
 
-        assert split in ['train', 'test']
+        # self.transform = transforms.Compose([
+        #    transforms.Resize((80, 60)),
+        #    transforms.ToTensor(),
+        #    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                         std=[0.229, 0.224, 0.225])
+        #])
+
+        assert split in ['train', 'test', 'all']
         self.split = split
 
         if download:
@@ -55,50 +93,69 @@ class FashionProductImages(VisionDataset):
         column_names.append(column_names[-1] + '2')
 
         # TODO.refactor: clean up column names, potentially merge last two columns
-        self.df = pandas.read_csv(fn("styles.csv"), names=column_names,
-                                  skiprows=1)
+        self.df_meta = pandas.read_csv(fn("styles.csv"), names=column_names,
+                                       skiprows=1)
+
+        # introduce column with image filenames
+        self.df_meta = self.df_meta.assign(
+            filename=self.df_meta["id"].apply(lambda x: str(x) + ".jpg"))
         
-        # relevant classes either by 'top'/'bottom' keyword or by list
-        all_classes = set(self.df[self.target_type])
+        # relevant classes either by 'top'/'bottom'/'background'/'evaluation'
+        # keyword or by list
+        all_classes = set(self.df_meta[self.target_type])
         if classes is not None:
             if isinstance(classes, list):
                 assert set(classes).issubset(all_classes)
             else:
-                assert classes in ['top', 'bottom']
+                assert classes in ['top', 'bottom', 'background', 'evaluation']
                 if classes == 'top':
                     classes = self.top20_classes
-                else:
+                elif classes == 'bottom':
                     classes = list(all_classes.difference(self.top20_classes))
+                elif classes == 'background':
+                    classes = self.background_classes
+                else:
+                    classes = self.evaluation_classes
         else:
             classes = list(all_classes)
         
         # parses out samples that
         # - have a the relevant class label
         # - have an image present in the 'images' folder
-        # - confer to the given split 'train'/'test'
+        # - confer to the given split 'train'/'test'/'all'
         images = os.listdir(fn("images"))
         if self.split == 'train':
-            split_mask = self._train_mask(self.df)
+            split_mask = self._train_mask(self.df_meta)
+        elif self.split == 'test':
+            split_mask = ~ self._train_mask(self.df_meta)
         else:
-            split_mask = ~ self._train_mask(self .df)
+            split_mask = True
         
-        self.samples = self.df.loc[
-            (self.df[self.target_type].isin(classes))
-            & (self.df["id"].apply(lambda x: str(x) + ".jpg").isin(images))
+        self.samples = self.df_meta[
+            (self.df_meta[self.target_type].isin(classes))
+            & (self.df_meta["filename"].isin(images))
             & split_mask
         ]
 
-        self.targets = self.samples[self.target_type]
+        self.targets = self.df[self.target_type]
         self.target_codec = LabelEncoder()
         self.target_codec.fit(classes)
-        
+
         self.target_indices = self.target_codec.transform(self.targets)
         self.n_classes = len(self.target_codec.classes_)
+        self.classes = self.target_codec.classes_
+
+        # assign different columns to integrate with few-shot github repo
+        self.samples = self.samples.assign(my_id=self.samples["id"])
+        self.samples = self.samples.assign(id=np.arange(len(self.samples)))
+        self.samples = self.samples.assign(
+            class_id=self.target_codec.transform(
+                self.samples[self.target_type]
+            )
+        )
 
     def __getitem__(self, index):
-        # TODO.check: some images are not RGB?
-        # TODO.check: some images are not 80x60?
-        sample = str(self.samples["id"].iloc[index]) + ".jpg"
+        sample = self.samples["filename"].iloc[index]
         X = PIL.Image.open(
             os.path.join(
                 self.root,
@@ -125,37 +182,26 @@ class FashionProductImages(VisionDataset):
     def _train_mask(self, df):
         return df["year"] % 2 == 0
 
+    # to integrate with few-shot github repo
+    @property
+    def num_classes(self):
+        return self.n_classes
+
+    # to integrate with few-shot github repo
+    @property
+    def df(self):
+        df = {
+
+        }
+        return self.samples
+
     def download(self):
-        # TODO.not_implemented: check this and compare to e.g. MNIST/CIFAR
-        # TODO.not_implemented: how to download from Kaggle
-        # if self._check_integrity():
-        #    print('Files already downloaded and verified')
-        #    return
-
-        # for (file_id, md5, filename) in self.file_list:
-        #    download_file_from_google_drive(file_id, os.path.join(self.root, self.base_folder), filename, md5)
-
-        # with zipfile.ZipFile(os.path.join(self.root, self.base_folder, "img_align_celeba.zip"), "r") as f:
-        #    f.extractall(os.path.join(self.root, self.base_folder))
-
-        raise NotImplementedError     
+        raise NotImplementedError
 
     def _check_integrity(self):
-        # TODO.not_implemented: check this and compare to e.g. MNIST/CIFAR
-
-        # for (_, md5, filename) in self.file_list:
-        #    fpath = os.path.join(self.root, self.base_folder, filename)
-        #    _, ext = os.path.splitext(filename)
-        #    # Allow original archive to be deleted (zip and 7z)
-        #    # Only need the extracted images
-        #    if ext not in [".zip", ".7z"] and not check_integrity(fpath, md5):
-        #        return False
-
-        # Should check a hash of the images
-        # return os.path.isdir(os.path.join(self.root, self.base_folder, "img_align_celeba"))
         return True
 
-        
+
 class FashionProductImagesSmall(FashionProductImages):
     """TODO
     """
