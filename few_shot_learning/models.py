@@ -52,10 +52,13 @@ class AdaptiveHead(nn.Module):
         else:
             self._out_features = out_features
 
-        self.fcs = [nn.Linear(self.in_features, out_features, bias=bias)
-                    for out_features in self._out_features]
+        for l, out_features in enumerate(self._out_features):
+            setattr(self,
+                    "fc{}".format(l),
+                    nn.Linear(self.in_features, out_features, bias=bias))
 
         self._active = 0
+        self._has_bias = bias
 
     def set_active(self, active):
         assert active < len(self._out_features)
@@ -64,16 +67,21 @@ class AdaptiveHead(nn.Module):
     @property
     def out_features(self):
         return self._out_features[self._active]
-
+    
+    @property
+    def fc(self):
+        return [getattr(self, "fc{}".format(l)) for l in self._out_features]
+        
     def forward(self, inputs):
-        return self.fcs[self._active](inputs)
+        fc = getattr(self, "fc{}".format(self._active))
+        return fc(inputs)
 
     def extra_repr(self):
         out_features_str = "{}/" * len(self._out_features)
         out_features_str = out_features_str[:-1]
         out_features_str = out_features_str.format(*self._out_features)
         return "in_features={}, out_features={}, bias={}".format(
-            self.in_features, out_features_str, self.fcs[0].bias is not None
+            self.in_features, out_features_str, self._has_bias is not None
         )
 
 
