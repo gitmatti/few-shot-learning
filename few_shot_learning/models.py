@@ -10,6 +10,16 @@ model_names = sorted(name for name in models.__dict__
     and callable(models.__dict__[name]))
 
 
+class Identity(nn.Module):
+    """Identity layer.
+
+    # Arguments
+        input: Input tensor
+    """
+    def forward(self, x):
+        return x
+
+
 class AdaptiveHead(nn.Module):
     r"""A collection of `torch.nn.Linear` with one active at a time, to be used
     as an adaptive head for a classification model.
