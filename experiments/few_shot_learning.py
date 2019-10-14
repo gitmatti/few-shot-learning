@@ -13,7 +13,7 @@ import numpy as np
 from typing import Callable, Tuple
 
 from few_shot.models import get_few_shot_encoder
-from few_shot.core import NShotTaskSampler, EvaluateFewShot
+from few_shot.core import NShotTaskSampler, EvaluateFewShot, create_nshot_task_label
 from few_shot.proto import proto_net_episode
 from few_shot.train import fit
 from few_shot.callbacks import *
