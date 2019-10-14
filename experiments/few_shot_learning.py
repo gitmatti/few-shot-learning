@@ -5,13 +5,15 @@ Snell et al Prototypical Networks.
 """
 import torch
 from torch.optim import Adam
+import torch.nn.parallel
 from torch.utils.data import DataLoader
 from torchvision import transforms, models
 import argparse
 import numpy as np
+from typing import Callable
 
 from few_shot.models import get_few_shot_encoder
-from few_shot.core import NShotTaskSampler, EvaluateFewShot, prepare_nshot_task
+from few_shot.core import NShotTaskSampler, EvaluateFewShot
 from few_shot.proto import proto_net_episode
 from few_shot.train import fit
 from few_shot.callbacks import *
@@ -53,6 +55,7 @@ parser.add_argument('-a', '--arch', metavar='ARCHITECTURE',
                     help=('model architecture: '
                           + ' | '.join(model_names)
                           + ' (default: resnet18)'))
+parser.add_argument('--pretrained', action='store_true')
 args = parser.parse_args()
 
 evaluation_episodes = 1000
@@ -67,7 +70,7 @@ else:
     raise(ValueError, 'Unsupported dataset')
 
 param_str = f'{args.dataset}_nt={args.n_train}_kt={args.k_train}_qt={args.q_train}_' \
-            f'nv={args.n_test}_kv={args.k_test}_qv={args.q_test}_small={args.small_dataset}'
+            f'nv={args.n_test}_kv={args.k_test}_qv={args.q_test}_small={args.small_dataset}_pretrained={args.pretrained}'
 
 print(param_str)
 
@@ -119,10 +122,14 @@ evaluation_taskloader = DataLoader(
 #########
 # Model #
 #########
-model = get_few_shot_encoder(num_input_channels)
-# model = models.__dict__[args.arch](pretrained=True)
-# model.fc = Identity()
-model.to(device, dtype=torch.double)
+if not args.pretrained:
+    model = get_few_shot_encoder(num_input_channels)
+    model.to(device) #, dtype=torch.double) why double!!!???
+else:
+    assert torch.cuda.is_available()
+    model = models.__dict__[args.arch](pretrained=True)
+    model.fc = Identity()
+    model = torch.nn.DataParallel(model).cuda()
 
 
 ############
@@ -139,6 +146,34 @@ def lr_schedule(epoch, lr):
         return lr / 2
     else:
         return lr
+    
+
+# this was originally imported from the github repo, but uses incompatible
+# stuff for allocation of batches and torch.double, which is just ... not necessary.
+def prepare_nshot_task(n: int, k: int, q: int) -> Callable:
+    """Typical n-shot task preprocessing.
+
+    # Arguments
+        n: Number of samples for each class in the n-shot classification task
+        k: Number of classes in the n-shot classification task
+        q: Number of query samples for each class in the n-shot classification task
+
+    # Returns
+        prepare_nshot_task_: A Callable that processes a few shot tasks with specified n, k and q
+    """
+    def prepare_nshot_task_(batch: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Create 0-k label and move to GPU.
+
+        TODO: Move to arbitrary device
+        """
+        x, y = batch
+        # x = x.double().cuda() # why double!!??
+        x = x.cuda() 
+        # Create dummy 0-(num_classes - 1) label
+        y = create_nshot_task_label(k, q).cuda()
+        return x, y
+
+    return prepare_nshot_task_
 
 
 callbacks = [
