@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms, models
 import argparse
 import numpy as np
-from typing import Callable
+from typing import Callable, Tuple
 
 from few_shot.models import get_few_shot_encoder
 from few_shot.core import NShotTaskSampler, EvaluateFewShot
