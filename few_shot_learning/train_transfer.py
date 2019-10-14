@@ -1,8 +1,6 @@
-import argparse
 import os
 import random
 import time
-import warnings
 import numpy as np
 from functools import partial
 from datetime import datetime
@@ -14,26 +12,21 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-import torchvision.models as models
 import torch.nn.parallel
 
 from few_shot_learning.models import AdaptiveHeadClassifier
-from few_shot_learning.datasets import FashionProductImages,\
+from few_shot_learning.datasets import FashionProductImages, \
     FashionProductImagesSmall
 from few_shot_learning.sampler import get_train_and_val_sampler
-from few_shot_learning.utils import AverageMeter, ProgressMeter,\
-    allocate_model, accuracy, allocate_inputs, batchnorm_to_fp32,\
-    restore_model, save_checkpoint, save_results
-
-model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
+from few_shot_learning.utils import AverageMeter, ProgressMeter, \
+    allocate_model, accuracy, allocate_inputs, save_checkpoint, save_results
+from config import DATA_PATH
 
 best_acc1 = 0
 
 
-def main(
-        data_dir='~/data',
+def transfer(
+        data_dir=DATA_PATH,
         architecture='resnet18',
         num_workers=4,
         epochs=100,
@@ -85,7 +78,7 @@ def main(
     #    restore_model(model, optimizer, gpu, model_dir)
 
     # TODO not_implemented
-    #if evaluate:
+    # if evaluate:
     #    validate(val_loader, model, criterion, device, print_freq)
     #    return
 
@@ -98,7 +91,7 @@ def main(
                                      std=[0.229, 0.224, 0.225])
 
     # image dimension resize depending on dataset
-    resize = (80,60) if small_dataset else (400, 300)
+    resize = (80, 60) if small_dataset else (400, 300)
 
     data_transforms = {
         'train': transforms.Compose([
@@ -258,7 +251,7 @@ def main(
                                              model, criterion,
                                              print_freq, _allocate_inputs)
 
-    
+
 def train_model(
         train_loader,
         val_loader,
@@ -298,7 +291,7 @@ def train_model(
         acc1 = top1.avg
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
-        
+
         if is_best:
             best_state_dict = model.state_dict()
 
@@ -341,7 +334,7 @@ def train_epoch(train_loader, model, criterion, optimizer, scheduler, epoch,
         data_time.update(time.time() - since)
 
         images, target = allocate_inputs(images, target)
-        
+
         # compute output and loss
         output = model(images)
 
@@ -410,78 +403,3 @@ def validate(val_loader, model, criterion, print_freq, allocate_inputs):
               .format(top1=top1, top5=top5))
 
     return losses, top1, top5
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PyTorch Transfer Learning')
-    parser.add_argument('--data', metavar='DIR',
-                        default=os.path.expanduser("~/data"),
-                        help='path to dataset')
-    parser.add_argument('-a', '--arch', metavar='ARCHITECTURE',
-                        default='resnet18',
-                        choices=model_names,
-                        help=('model architecture: '
-                              + ' | '.join(model_names)
-                              + ' (default: resnet18)'))
-    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
-                        help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', default=100, type=int, metavar='N',
-                        help='number of total epochs to run')
-    parser.add_argument('-b', '--batch-size', default=64, type=int,
-                        metavar='N', help='mini-batch size (default: 64)')
-    parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
-                        metavar='LR', help='initial learning rate', dest='lr')
-    parser.add_argument('--lr_tr', '--learning-rate-tr', default=None,
-                        type=float, metavar='LR',
-                        help='initial learning rate for transfer',
-                        dest='lr_tr')
-    parser.add_argument('--optim', default=torch.optim.Adam,
-                        metavar='OPTIMIZER',
-                        help='optimizer from torch.optim')
-    parser.add_argument('--optim-args', default={}, type=dict, metavar='DICT',
-                        help='optimizer args')
-    parser.add_argument('-p', '--print-freq', default=10, type=int,
-                        metavar='N', help='print frequency (default: 10)')
-    parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                        help='path to latest checkpoint (default: none)')
-    parser.add_argument('-e', '--evaluate', dest='evaluate',
-                        action='store_true',
-                        help='evaluate model on validation set')
-    parser.add_argument('--seed', default=None, type=int,
-                        help='seed for initializing training. ')
-    parser.add_argument('--gpu', default=None, type=int,
-                        help='GPU id to use.')
-    parser.add_argument('--distributed', action='store_true',
-                        help='Use multi-processing distributed training to '
-                             'launch N processes per node, which has N GPUs.')
-    # TODO not elegant
-    parser.add_argument('--device', default=None, metavar='DEV')
-    parser.add_argument('--dtype', default=None, metavar='DTYPE')
-    parser.add_argument('--date', action='store_true',
-                        help='Create log and model folder with current date')
-    parser.add_argument('--small-dataset', action='store_true',
-                        help='Use dataset with smaller image size')
-    # TODO model_dir and log_dir
-
-    args = parser.parse_args()
-
-    main(
-        data_dir=args.data,
-        architecture=args.arch,
-        num_workers=args.workers,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.lr,
-        learning_rate_tr=args.lr_tr,
-        optimizer_cls=args.optim,
-        print_freq=args.print_freq,
-        resume=args.resume,
-        evaluate=args.evaluate,
-        seed=args.seed,
-        gpu=args.gpu,
-        device=args.device,
-        dtype=args.dtype,
-        distributed=args.distributed,
-        date_prefix=args.date,
-        small_dataset=args.small_dataset
-    )
