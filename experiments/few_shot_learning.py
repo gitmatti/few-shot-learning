@@ -33,9 +33,10 @@ parser.add_argument('-a', '--arch', metavar='ARCHITECTURE',
 parser.add_argument('--pretrained', action='store_true')
 parser.add_argument('--validate', action='store_true')
 parser.add_argument('--n_val_classes', default=10, type=int)
+parser.add_argument('--gpu', default=None, type=int)
 args = parser.parse_args()
 
-n_epochs = 1
+n_epochs = 80
 validation_episodes = 200
 evaluation_episodes = 1000
 episodes_per_epoch = 100
@@ -60,5 +61,6 @@ few_shot_training(
     pretrained=args.pretrained,
     monitor_validation=args.validate,
     n_val_classes=args.n_val_classes,
-    architecture='resnet18'
+    architecture='resnet18',
+    gpu=args.gpu
 )
