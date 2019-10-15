@@ -26,11 +26,6 @@ from few_shot_learning.datasets import FashionProductImages, \
 from few_shot_learning.models import Identity
 from config import DATA_PATH, PATH
 
-if torch.cuda.is_available():
-    device = torch.device('cuda')
-    torch.backends.cudnn.benchmark = True
-else:
-    device = torch.device('cpu')
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
@@ -57,7 +52,8 @@ def few_shot_training(
         pretrained=False,
         monitor_validation=False,
         n_val_classes=10,
-        architecture='resnet18'
+        architecture='resnet18',
+        gpu=None
 ):
     setup_dirs()
 
@@ -163,17 +159,30 @@ def few_shot_training(
     #########
     # Model #
     #########
+    
+    if torch.cuda.is_available():
+        if gpu is not None:
+            device = torch.device('cuda', gpu)
+        else:
+            device = torch.device('cuda')
+        torch.backends.cudnn.benchmark = True
+    else:
+        device = torch.device('cpu')
+    
     if not pretrained:
         model = get_few_shot_encoder(num_input_channels)
         # ADAPTED
         model.to(device)
-        # BEFROE
+        # BEFORE
         # model.to(device, dtype=torch.double)
     else:
         assert torch.cuda.is_available()
         model = models.__dict__[architecture](pretrained=True)
         model.fc = Identity()
-        model = model.cuda()
+        if gpu is not None:
+            model = model.cuda(gpu)
+        else:
+            model = model.cuda()
         # TODO this is too risky: I'm not sure that this can work, since in
         #  the few-shot github repo the batch axis is actually split into
         #  support and query samples
@@ -203,22 +212,13 @@ def few_shot_training(
             k_way=k_test,
             q_queries=q_test,
             taskloader=evaluation_taskloader,
-            prepare_batch=prepare_nshot_task(n_test, k_test, q_test),
+            prepare_batch=prepare_nshot_task(n_test, k_test, q_test, device=device),
             distance=distance,
             on_epoch_end=False,
             on_train_end=True,
             prefix='test_'
-        ),
-        ModelCheckpoint(
-            filepath=PATH + f'/models/proto_nets/{param_str}.pth',
-            monitor=f'val_{n_test}-shot_{k_test}-way_acc',
-            verbose=1,  # ADAPTED
-            save_best_only=True  # ADAPTED
-        ),
-        LearningRateScheduler(schedule=lr_schedule),
-        CSVLogger(PATH + f'/logs/proto_nets/{param_str}.csv'),
+        )
     ]
-
     if monitor_validation:
         callbacks.append(
             # ADAPTED: this is the validation monitoring now - computed
@@ -231,13 +231,23 @@ def few_shot_training(
                 q_queries=q_test,
                 # BEFORE taskloader=evaluation_taskloader,
                 taskloader=validation_taskloader,  # ADAPTED
-                prepare_batch=prepare_nshot_task(n_test, k_test, q_test),
+                prepare_batch=prepare_nshot_task(n_test, k_test, q_test, device=device),
                 distance=distance,
                 on_epoch_end=True,  # ADAPTED
                 on_train_end=False,  # ADAPTED
                 prefix='val_'
             )
         )
+    callbacks.extend([
+        ModelCheckpoint(
+            filepath=PATH + f'/models/proto_nets/{param_str}.pth',
+            monitor=f'val_{n_test}-shot_{k_test}-way_acc',
+            verbose=1,  # ADAPTED
+            save_best_only=monitor_validation  # ADAPTED
+        ),
+        LearningRateScheduler(schedule=lr_schedule),
+        CSVLogger(PATH + f'/logs/proto_nets/{param_str}.csv'),
+    ])
 
     fit(
         model,
@@ -245,7 +255,7 @@ def few_shot_training(
         loss_fn,
         epochs=n_epochs,
         dataloader=background_taskloader,
-        prepare_batch=prepare_nshot_task(n_train, k_train, q_train),
+        prepare_batch=prepare_nshot_task(n_train, k_train, q_train, device=device),
         callbacks=callbacks,
         metrics=['categorical_accuracy'],
         fit_function=proto_net_episode,
@@ -256,7 +266,7 @@ def few_shot_training(
 
 
 # ADAPTED: the original code used torch.double
-def prepare_nshot_task(n: int, k: int, q: int) -> Callable:
+def prepare_nshot_task(n: int, k: int, q: int, device=None) -> Callable:
     """Typical n-shot task preprocessing.
 
     # Arguments
