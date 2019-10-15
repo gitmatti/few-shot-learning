@@ -1,3 +1,9 @@
+"""
+Run transfer learning on FashionProductImages dataset. This will first fine-tune
+a chosen model from the ImageNet model zoo on classifying the 20 most common
+product and then in a second pass will fine-tune the network further on the
+remaining, less common, product classes.
+"""
 import os
 import random
 import time
@@ -35,11 +41,8 @@ def transfer(
         learning_rate_tr=None,
         optimizer_cls=torch.optim.Adam,
         print_freq=10,
-        resume=False,
-        evaluate=False,
         seed=None,
         gpu=None,
-        device=None,
         dtype=None,
         distributed=False,
         log_dir='~/few-shot-learning/logs',
@@ -69,8 +72,6 @@ def transfer(
                               architecture)
 
     _allocate_inputs = partial(allocate_inputs, dtype, distributed, gpu)
-
-    # global best_acc1
 
     # TODO not_implemented
     # optionally resume from a checkpoint
@@ -104,13 +105,11 @@ def transfer(
         ]),
         'val': transforms.Compose([
             transforms.Resize(resize),
-            # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
         ]),
         'test': transforms.Compose([
             transforms.Resize(resize),
-            # transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize
         ]),
@@ -165,7 +164,7 @@ def transfer(
 
     # can't stratify along classes since some have only one sample
     # TODO: make sure there is at least one sample of every class in the
-    # TODO: training set?
+    #  training set?
     train_sampler_tr, train_indices_tr, val_sampler_tr, val_indices_tr = \
         get_train_and_val_sampler(trainset_tr, balanced_training=True,
                                   stratify=False)

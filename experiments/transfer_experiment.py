@@ -1,5 +1,4 @@
 import argparse
-import os
 import torchvision.models as models
 import torch.nn.parallel
 
@@ -41,11 +40,6 @@ parser.add_argument('--optim-args', default={}, type=dict, metavar='DICT',
                     help='optimizer args')
 parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
-parser.add_argument('-e', '--evaluate', dest='evaluate',
-                    action='store_true',
-                    help='evaluate model on validation set')
 parser.add_argument('--seed', default=None, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=None, type=int,
@@ -53,9 +47,6 @@ parser.add_argument('--gpu', default=None, type=int,
 parser.add_argument('--distributed', action='store_true',
                     help='Use multi-processing distributed training to '
                          'launch N processes per node, which has N GPUs.')
-# TODO not elegant
-parser.add_argument('--device', default=None, metavar='DEV')
-parser.add_argument('--dtype', default=None, metavar='DTYPE')
 parser.add_argument('--date', action='store_true',
                     help='Create log and model folder with current date')
 parser.add_argument('--small-dataset', action='store_true',
@@ -74,12 +65,8 @@ transfer(
     learning_rate_tr=args.lr_tr,
     optimizer_cls=args.optim,
     print_freq=args.print_freq,
-    resume=args.resume,
-    evaluate=args.evaluate,
     seed=args.seed,
     gpu=args.gpu,
-    device=args.device,
-    dtype=args.dtype,
     distributed=args.distributed,
     date_prefix=args.date,
     small_dataset=args.small_dataset
