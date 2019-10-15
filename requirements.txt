@@ -6,3 +6,4 @@ jupyter
 matplotlib
 pytest
 scikit-image
+git+git://github.com/oscarknagg/few-shot.git#egg=few-shot
