@@ -5,7 +5,7 @@ the [Fashion Product Images Dataset](https://www.kaggle.com/paramaggarwal/fashio
 # Setup
 ### Requirements
 
-Listed in `requirements.txt` (incomplete).
+Listed in `requirements.txt`.
 
 
 ### Data
@@ -35,7 +35,7 @@ _Each product is identified by an ID like 42431. You will find a map to all the 
 After adding the datasets run `pytest` in the root directory to run tests. Importantly, there are tests for the integration with this existing [github repository](https://github.com/oscarknagg/few-shot) which implements several few-shot-learning algorithms already. Integration mainly concerns handling of the fashion dataset. Make sure you to clone/fork the above github repository and that your python can find it.
 
 
-### Transfer Learning
+# Transfer Learning
 
 Run `few_shot_learning/transfer.py` for running transfer learning on the fashion data with pre-trained ImageNet models.
 The script will instantiate a pre-trained model and, in a first phase, fine-tune the weights for a 20-way classification task for the classes with the most samples in the dataset. These are given below. In a second fine-tuning phase, the weights are adapted by learning on a 123-way classification task for the remaining classes and samples.
@@ -132,7 +132,27 @@ optional arguments:
 
 Refer to `notebook/transfer_learning.ipynb` for a detailed description of results and strategy.
 
+| Finetuning (Top-20) - Test Set Accuracy |       Top1    | Top5 |
+|-------------------------------------------------------|------|-----|
+| average across classes                                | 88.3 | 95.4|
+| average across classes (w/o 'Perfume and Body Mist')  | 92.1 | 99.4|
 
-### Few-shot-learning
 
-(TODO)
+| Transfer (Remaining classes) Test Set Accuracy |       Top1    | Top5 |
+|-------------------------------------------------------|------|-----|
+| average across classes                                | 46.8 | 60.5|
+| average across classes (w/o test-only classes)        | ?    | ?   |
+
+
+# Few-shot-learning
+
+### Results
+
+Refer to `notebook/few_shot_learning.ipynb` for a detailed description of results and strategy.
+
+|                           | Fashion Small |     |      |      |     |      |
+|---------------------------|---------------|-----|------|------|-----|------|
+| **k-way**                 | **2**         |**5**|**15**|**2** |**5**|**15**|
+| **n-shot**                | **1**         |**1**|**1** |**5** |**5**|**5** |
+| 80 epochs                 | 89.9          |76.5 |58.5  |95.1  |88.7 |76.4  |
+| best model (validation)   | 89.8          |73.0 |?     |95.6  |86.5 |?     |
