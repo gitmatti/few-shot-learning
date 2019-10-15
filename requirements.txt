@@ -1,5 +1,8 @@
+torch==1.1.0
+torchvision
 scikit-learn
 pandas
-kaggle
 jupyter
 matplotlib
+pytest
+scikit-image
