@@ -27,9 +27,7 @@ DATA_PATH/
 
 The `images/` folder contains 44441 JPG-images of 143 product classes. From the dataset description:
 
-*Each product is identified by an ID like 42431. You will find a map to all the products in styles.csv. From here, you can fetch the image for this product from images/42431.jpg and the complete metadata from styles/42431.json.
-
-To get started easily, we also have exposed some of the key product categories and it's display name in styles.csv*
+_Each product is identified by an ID like 42431. You will find a map to all the products in styles.csv. From here, you can fetch the image for this product from images/42431.jpg and the complete metadata from styles/42431.json. To get started easily, we also have exposed some of the key product categories and it's display name in styles.csv_
 
 
 ### Tests (optional)
@@ -65,13 +63,74 @@ The script will instantiate a pre-trained model and, in a first phase, fine-tune
 | Shirts                | 3217   |
 | Tshirts               | 7070   |
 
+Run e.g.
+
+```
+python -m experiments.transfer_experiment -a resnet50 -p 50 --distributed --date --epochs 100
+```
+
 
 **Arguments**
-- (TODO)
+
+Inspect arguments via
+
+```
+python -m experiments.transfer_learning -h
+```
+
+Output:
+
+```
+usage: -m [-h] [--data DIR] [-a ARCHITECTURE] [-j N] [--epochs N] [-b N]
+          [--lr LR] [--lr_tr LR] [--optim OPTIMIZER] [--optim-args DICT]
+          [-p N] [--resume PATH] [-e] [--seed SEED] [--gpu GPU]
+          [--distributed] [--device DEV] [--dtype DTYPE] [--date]
+          [--small-dataset]
+
+PyTorch Transfer Learning
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --data DIR            path to dataset
+  -a ARCHITECTURE, --arch ARCHITECTURE
+                        model architecture: alexnet | densenet121 |
+                        densenet161 | densenet169 | densenet201 | googlenet |
+                        inception_v3 | mnasnet0_5 | mnasnet0_75 | mnasnet1_0 |
+                        mnasnet1_3 | mobilenet_v2 | resnet101 | resnet152 |
+                        resnet18 | resnet34 | resnet50 | resnext101_32x8d |
+                        resnext50_32x4d | shufflenet_v2_x0_5 |
+                        shufflenet_v2_x1_0 | shufflenet_v2_x1_5 |
+                        shufflenet_v2_x2_0 | squeezenet1_0 | squeezenet1_1 |
+                        vgg11 | vgg11_bn | vgg13 | vgg13_bn | vgg16 | vgg16_bn
+                        | vgg19 | vgg19_bn | wide_resnet101_2 |
+                        wide_resnet50_2 (default: resnet18)
+  -j N, --workers N     number of data loading workers (default: 4)
+  --epochs N            number of total epochs to run
+  -b N, --batch-size N  mini-batch size (default: 64)
+  --lr LR, --learning-rate LR
+                        initial learning rate
+  --lr_tr LR, --learning-rate-tr LR
+                        initial learning rate for transfer
+  --optim OPTIMIZER     optimizer from torch.optim
+  --optim-args DICT     optimizer args
+  -p N, --print-freq N  print frequency (default: 10)
+  --resume PATH         path to latest checkpoint (default: none)
+  -e, --evaluate        evaluate model on validation set
+  --seed SEED           seed for initializing training.
+  --gpu GPU             GPU id to use.
+  --distributed         Use multi-processing distributed training to launch N
+                        processes per node, which has N GPUs.
+  --device DEV
+  --dtype DTYPE
+  --date                Create log and model folder with current date
+  --small-dataset       Use dataset with smaller image size
+```
+
+
 
 ### Results
 
-(TODO)
+Refer to `notebook/transfer_learning.ipynb` for a detailed description of results and strategy.
 
 
 ### Few-shot-learning

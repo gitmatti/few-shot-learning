@@ -2,7 +2,7 @@ from __future__ import print_function
 import os
 import csv
 import numpy as np
-from torchvision.datasets import VisionDataset
+from torchvision.datasets import VisionDataset, CIFAR10
 from functools import partial
 import PIL.Image
 import pandas
@@ -13,12 +13,43 @@ from config import DATA_PATH
 
 
 class FashionProductImages(VisionDataset):
-    """TODO
+    """Fashion Dataset available from <https://www.kaggle.com/paramaggarwal/fashion-product-images-dataset/version/1>.
+
+    Args:
+        root (string, optional): Root directory of dataset where directory
+            ``fashion-dataset`` exists. Default config.DATA_PATH
+        split (string, optional): If True, creates dataset from training set, otherwise
+            creates from test set.
+        classes (string or list[string] or None, optional): One of 'top',
+            'bottom', 'background', 'evaluation' or a list of class labels or
+            None to include all classes.
+        transform (callable, optional): A function/transform that takes in an PIL image
+            and returns a transformed version. E.g, ``transforms.RandomCrop``
+        target_transform (callable, optional): A function/transform that takes in the
+            target and transforms it.
+        download (bool, optional): Not implemented.
+
+    Class attributes:
+        base_folder: 'fashion-dataset'
+        top20_classes: list of strings of the 20 classes with the most samples
+        background_classes: list of strings of background classes for few-shot
+            learning.
+        evaluation_classes: list of strings of evaluation classes for few-shot
+            learning
+        targetType = 'articleType'
+
+    Attributes:
+        samples: `pandas.DataFrame` with sample information
+        df: another way to access `samples`.
+        target_indices: list of integers in [0, ..., n_classes -1], same length
+            as samples
+        classes: list of strings of selected classes
+        n_classes: number of classes
+
     """
     base_folder = 'fashion-dataset'
     filename = "fashion-product-images-dataset.zip"
-    url = None # TODO
-    file_list = None # TODO
+    url = "https://www.kaggle.com/paramaggarwal/fashion-product-images-dataset/version/1"
 
     top20_classes = [
         "Jeans", "Perfume and Body Mist", "Formal Shoes",
@@ -65,13 +96,6 @@ class FashionProductImages(VisionDataset):
         super(FashionProductImages, self).__init__(
             root, transform=transform, target_transform=target_transform)
 
-        # self.transform = transforms.Compose([
-        #    transforms.Resize((80, 60)),
-        #    transforms.ToTensor(),
-        #    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-        #                         std=[0.229, 0.224, 0.225])
-        #])
-
         assert split in ['train', 'test', 'all']
         self.split = split
 
@@ -84,7 +108,6 @@ class FashionProductImages(VisionDataset):
 
         fn = partial(os.path.join, self.root, self.base_folder)
 
-        # TODO.refactor: refer to class attribute 'file_list' instead of "styles.csv"
         with open(fn("styles.csv")) as file:
             csv_reader = csv.reader(file)
             column_names = next(csv_reader)
@@ -166,8 +189,6 @@ class FashionProductImages(VisionDataset):
         ).convert("RGB")
         target = self.target_indices[index]
 
-        # TODO.extension: allow returning one-hot representation of target
-
         if self.transform is not None:
             X = self.transform(X)
 
@@ -190,9 +211,6 @@ class FashionProductImages(VisionDataset):
     # to integrate with few-shot github repo
     @property
     def df(self):
-        df = {
-
-        }
         return self.samples
 
     def download(self):
@@ -203,10 +221,12 @@ class FashionProductImages(VisionDataset):
 
 
 class FashionProductImagesSmall(FashionProductImages):
-    """TODO
+    """Fashion Dataset available from <https://www.kaggle.com/paramaggarwal/fashion-product-images-dataset/version/1>.
+
+    Subclass of `FashionProductImages` dataset.
     """
     base_folder = 'fashion-product-images-small'
-    url = None # TODO
+    url = "https://www.kaggle.com/paramaggarwal/fashion-product-images-small"
     filename = 'fashion-product-images-small.zip'
 
 
