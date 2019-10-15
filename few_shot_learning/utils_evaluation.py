@@ -1,5 +1,5 @@
 import PIL.Image
-import numpy
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -12,14 +12,97 @@ from few_shot.core import NShotTaskSampler
 from typing import Callable, Tuple
 
 from few_shot_learning.train_few_shot import prepare_nshot_task
-from few_shot_learning.models import Identity
+from few_shot_learning.models import Identity, AdaptiveHeadClassifier
 from few_shot_learning.datasets import FashionProductImagesSmall,\
     FashionProductImages
+from few_shot_learning.utils import accuracy
 from config import DATA_PATH
 
 model_names = sorted(name for name in models.__dict__
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
+
+
+def evaluate_transfer(
+        state_dict,
+        device,
+        architecture='resnet50',
+        classes='top',
+        small_dataset=False,
+        distributed=False,
+        batch_size=128,
+        num_workers=4,
+):
+    resize = (80, 60) if small_dataset else (400, 300)
+
+    transform = transforms.Compose([
+        transforms.Resize(resize),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
+    ])
+
+    dataset_class = FashionProductImagesSmall if small_dataset \
+        else FashionProductImages
+
+    testset = dataset_class(DATA_PATH, classes=classes, split="test",
+                            transform=transform)
+    test_loader = DataLoader(testset,
+                             batch_size=batch_size,
+                             shuffle=False,
+                             num_workers=num_workers)
+
+    model = models.__dict__[architecture](pretrained=True)
+    n_features = model.fc.in_features
+    model.fc = nn.Linear(n_features, testset.n_classes)
+    if distributed:
+        model = nn.DataParallel(model)
+    model.load_state_dict(state_dict)
+
+    model.eval()
+
+    outputs = []
+    targets = []
+
+    with torch.no_grad():
+        # end = time.time()
+        for i, (images, target) in enumerate(test_loader):
+            images = images.to(device)
+            target = target.to(device)
+
+            # compute outputallocate_inputs_(images, target)
+            output = model(images)
+            # loss = criterion(output, target)
+
+            outputs.append(output)
+            targets.append(target)
+
+    outputs = torch.cat(outputs)
+    targets = torch.cat(targets)
+
+    acc1, acc5 = accuracy(outputs, targets, topk=(1, 5))
+    acc1_avg = acc1.item()
+    acc5_avg = acc5.item()
+
+    # print(acc1_avg, acc5_avg)
+
+    acc1_classwise = np.zeros(
+        testset.n_classes)  # [0.0 for _ in range(testset.n_classes)]
+    acc5_classwise = np.zeros(
+        testset.n_classes)  # [0.0 for _ in range(testset.n_classes)]
+
+    for c in range(testset.n_classes):
+        is_class = (targets == c)
+        if is_class.any():
+            acc1, acc5 = accuracy(outputs[is_class, :], targets[is_class],
+                                  topk=(1, 5))
+            acc1_classwise[c] = acc1.item()
+            acc5_classwise[c] = acc5.item()
+        else:
+            acc1_classwise[c] = -1.0
+            acc5_classwise[c] = -1.0
+
+    return acc1_avg, acc5_avg, acc1_classwise, acc5_classwise
 
 
 def evaluate_few_shot(
