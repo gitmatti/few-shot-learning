@@ -29,9 +29,9 @@ def evaluate_transfer(
         architecture='resnet50',
         classes='top',
         small_dataset=False,
-        distributed=False,
         batch_size=128,
         num_workers=4,
+        n_classes=None,
 ):
     resize = (80, 60) if small_dataset else (400, 300)
 
@@ -51,13 +51,14 @@ def evaluate_transfer(
                              batch_size=batch_size,
                              shuffle=False,
                              num_workers=num_workers)
-
+    
     model = models.__dict__[architecture](pretrained=True)
     n_features = model.fc.in_features
-    model.fc = nn.Linear(n_features, testset.n_classes)
-    if distributed:
-        model = nn.DataParallel(model)
+    
+    out_features = n_classes or testset.n_classes
+    model.fc = nn.Linear(n_features, out_features)
     model.load_state_dict(state_dict)
+    model.to(device)
 
     model.eval()
 
@@ -70,7 +71,7 @@ def evaluate_transfer(
             images = images.to(device)
             target = target.to(device)
 
-            # compute outputallocate_inputs_(images, target)
+            # compute output
             output = model(images)
             # loss = criterion(output, target)
 
@@ -102,7 +103,7 @@ def evaluate_transfer(
             acc1_classwise[c] = -1.0
             acc5_classwise[c] = -1.0
 
-    return acc1_avg, acc5_avg, acc1_classwise, acc5_classwise
+    return acc1_avg, acc5_avg, acc1_classwise, acc5_classwise, outputs, targets
 
 
 def evaluate_few_shot(

@@ -99,8 +99,8 @@ def few_shot_training(
         if not n_val_classes >= k_test:
             n_val_classes = k_test
             print("Warning: `n_val_classes` < `k_test`. Take a larger number"
-                  "of validation classes next time. Increased to `k_test`"
-                  "classes")
+                  " of validation classes next time. Increased to `k_test`"
+                  " classes")
 
         # class structure for background (training), validation (validation),
         # evaluation (test): take a random subset of background classes
