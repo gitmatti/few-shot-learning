@@ -150,9 +150,25 @@ Refer to `notebook/transfer_learning.ipynb` for a detailed description of result
 
 Refer to `notebook/few_shot_learning.ipynb` for a detailed description of results and strategy.
 
+
+For the small dataset (80-by-60 pixel images):
+
 |                           | Fashion Small |     |      |      |     |      |
 |---------------------------|---------------|-----|------|------|-----|------|
 | **k-way**                 | **2**         |**5**|**15**|**2** |**5**|**15**|
 | **n-shot**                | **1**         |**1**|**1** |**5** |**5**|**5** |
-| 80 epochs                 | 89.9          |76.5 |58.5  |95.1  |88.7 |76.4  |
-| best model (validation)   | 89.8          |73.0 |?     |95.6  |86.5 |?     |
+| 80 epochs                 | 89.1          |74.8 |58.2  |95.8  |88.0 |76.2  |
+| best model (validation)   | 88.5          |72.7 |53.1  |96.2  |87.3 |72.6  |
+
+
+For the full dataset (400-by-300 pixel images):
+
+|                           | Fashion Small |     |      |      |     |      |
+|---------------------------|---------------|-----|------|------|-----|------|
+| **k-way**                 | **2**         |**5**|**15**|**2** |**5**|**15**|
+| **n-shot**                | **1**         |**1**|**1** |**5** |**5**|**5** |
+| 80 epochs                 | 90.6          |78.3 |57.2  |95.9  |88.1 |74.8  |
+| best model (validation)   | 89.6          |75.7 |57.3  |96.9  |87.4 |tbd   |
+
+
+
