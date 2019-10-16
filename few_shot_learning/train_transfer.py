@@ -291,13 +291,23 @@ def train_model(
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
 
+        # handle nn.DataParallel
+        try:
+            checkpoint_state_dict = model.module.state_dict()
+        except AttributeError:
+            checkpoint_state_dict = model.state_dict()
+
         if is_best:
-            best_state_dict = model.state_dict()
+            # handle nn.DataParallel
+            try:
+                best_state_dict = model.module.state_dict()
+            except AttributeError:
+                best_state_dict = model.state_dict()
 
         save_checkpoint({
             'epoch': epoch + 1,
             # 'arch': architecture,
-            'state_dict': model.state_dict(),
+            'state_dict': checkpoint_state_dict,
             'best_acc1': best_acc1,
             'optimizer': optimizer.state_dict()
         }, is_best, model_dir=model_dir, prefix=model_prefix)
