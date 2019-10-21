@@ -2,7 +2,7 @@ from __future__ import print_function
 import os
 import csv
 import numpy as np
-from torchvision.datasets import VisionDataset, CIFAR10
+from torchvision.datasets import VisionDataset
 from functools import partial
 import PIL.Image
 import pandas
@@ -91,8 +91,11 @@ class FashionProductImages(VisionDataset):
     # TODO.not_implemented: should different 'target_type' be allowed?
     target_type = 'articleType'
 
+    attribute_types = ['masterCategory'] #, 'subCategory']
+
     def __init__(self, root=DATA_PATH, split='train', transform=None,
-                 target_transform=None, download=False, classes='top'):
+                 target_transform=None, download=False, classes='top',
+                 return_class_attributes=False):
         super(FashionProductImages, self).__init__(
             root, transform=transform, target_transform=target_transform)
 
@@ -141,6 +144,8 @@ class FashionProductImages(VisionDataset):
                     classes = self.evaluation_classes
         else:
             classes = list(all_classes)
+
+        self.all_classes = all_classes
         
         # parses out samples that
         # - have a the relevant class label
@@ -167,6 +172,15 @@ class FashionProductImages(VisionDataset):
         self.target_indices = self.target_codec.transform(self.targets)
         self.n_classes = len(self.target_codec.classes_)
         self.classes = self.target_codec.classes_
+
+        self.return_class_attributes = return_class_attributes
+        self.attribute_codecs = [LabelEncoder() for _ in self.attribute_types]
+        self.attribute_indices = []
+        for codec, meta_type in zip(self.attribute_codecs, self.attribute_types):
+            codec.fit(list(set(self.df_meta[meta_type])))
+            self.attribute_indices.append(codec.transform(self.df[meta_type]))
+        self.attribute_n_classes = [len(codec.classes_) for codec in self.attribute_codecs]
+        self.attribute_features = sum(self.attribute_n_classes)
 
         # assign different columns to integrate with few-shot github repo
         self.samples = self.samples.assign(my_id=self.samples["id"])
@@ -195,7 +209,13 @@ class FashionProductImages(VisionDataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        return X, target
+        if self.return_class_attributes:
+            attr = [attr[index] for attr in self.attribute_indices]
+            if self.attribute_transform is not None:
+                attr = self.attribute_transform(attr)
+            return X, target, attr
+        else:
+            return X, target
 
     def __len__(self):
         return len(self.samples)
@@ -212,6 +232,12 @@ class FashionProductImages(VisionDataset):
     @property
     def df(self):
         return self.samples
+
+    def attribute_transform(self, attribute):
+        one_hots = [np.zeros(n_classes) for n_classes in self.attribute_n_classes]
+        for i, attr_idx in enumerate(attribute):
+            one_hots[i][attr_idx] = 1
+        return np.concatenate(one_hots)
 
     def download(self):
         raise NotImplementedError

@@ -1,9 +1,10 @@
 import torch
 from torch import nn
 import torchvision.models as models
-
-models.resnet18()
-
+import os
+from config import DATA_PATH
+import pickle
+import bcolz
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -164,3 +165,66 @@ class AdaptiveHeadClassifier(nn.Module):
 
     def forward(self, inputs):
         return self.model(inputs)
+
+
+class ClassEmbedding(nn.Module):
+    r"""A classifier model with a (possibly pre-trained) model body and a
+    flexible head to allow for fine-tuning and transfer learning.
+
+    Args:
+        out_features: list of sizes of output sample of each input sample
+        architecture: one of torchvision's model architectures,
+            e.g. ``'resnet50'``. Default ``'resnet18'``.
+        pretrained: If set to ``True``, the model will be initialized
+            with pre-trained weights. Default ``True``.
+        freeze: If set to ``True``, the torchvision model will be used as a
+            feature extractor with its weights frozen. The head will learn as
+            usual. Default ``False``.
+
+    Shape:
+        - Input: depends on the model architecture. Typically :math:`(N, C, H, W)`
+          where :math:`C, H, W` are the input channel, height and width.
+        - Output: :math:`(N, H_{out})` where :math:`H_{out} = \text{out\_features}`
+          depends on the active head, to be set by model.set_active(active)
+
+    Attributes:
+        model: one of torchvision's pre-defined models
+        model_head: instance of `few-shot-learning.models.AdaptiveHead`
+        out_features: :math:`H_{out}` of the currently active head
+
+    Examples::
+
+        >>> TODO
+    """
+    def __init__(self, out_features, train_embedding, eval_embedding,
+                 embed_dim, attribute_dim):
+        super(ClassEmbedding, self).__init__()
+
+        self.out_features = out_features
+        self.embed_dim = train_embedding.shape[1]
+        self.attribute_dim = attribute_dim
+
+        self.train_embedding = self._create_embedding_layer(train_embedding)
+        self.eval_embedding = self._create_embedding_layer(eval_embedding)
+
+        self.fc = nn.Linear(self.embed_dim + self.attribute_dim,
+                            self.out_features)
+
+    def embedding(self, y):
+        if self.training:
+            return self.train_embedding(y)
+        else:
+            return self.eval_embedding(y)
+
+    def forward(self, y, attributes):
+        # TODO unit length
+        # TODO ensure that y correctly maps to class label semantics
+        hidden = torch.cat([self.embedding(y), attributes], dim=1)
+        return self.fc(hidden)
+
+    def _create_embedding_layer(self, embedding):
+        num_embeddings, embedding_dim = embedding.shape
+        emb_layer = nn.Embedding(num_embeddings, embedding_dim)
+        emb_layer.load_state_dict({'weight': torch.from_numpy(embedding)})
+        emb_layer.weight.requires_grad = False
+        return emb_layer
